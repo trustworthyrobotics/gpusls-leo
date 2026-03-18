@@ -1,0 +1,6 @@
+[submodule "src/gpu_sls/external/primal_dual_ilqr"]
+	path = src/gpu_sls/external/primal_dual_ilqr
+	url = https://github.com/iit-DLSLab/primal_dual_ilqr.git
+[submodule "gpu_sls/src/gpu_sls/external/linearization_sls"]
+	path = gpu_sls/src/gpu_sls/external/linearization_sls
+	url = https://github.com/keyis2/linearization_sls
