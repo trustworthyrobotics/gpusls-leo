@@ -20,6 +20,8 @@ dependencies = [
     "scipy",
     "matplotlib",
     "immrax[cuda] @ git+https://github.com/keyis2/immrax@upgrade_jax",
+    "hydra-core",
+    "jax_verify @ git+https://github.com/keyis2/jax_verify@master",
 ]
 
 [tool.setuptools.packages.find]
