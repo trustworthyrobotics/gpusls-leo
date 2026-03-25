@@ -5,3 +5,6 @@ build/
 # Bytecode
 __pycache__/
 *.pyc
+examples/neural_better/output/data
+examples/neural_better/outputs
+*.DS_Store

@@ -1,0 +1,283 @@
+settings:
+  seed: 0
+  task_name: "T_pushing"
+  data_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+  train_mode: "ct_ctl" # {"dt_dyn","ct_dyn", "ct_ctl"}
+
+data:
+  state_dim: 8
+  pose_dim: 3
+  action_dim: 2
+  action_bound: 30
+  stem_size: [30, 90]
+  bar_size: [120, 30]
+  pusher_size: 5
+  abs_pose: True
+  dt_dyn:
+    out_path: "output/data/${settings.task_name}_freq${data.dt_dyn.frequency}_${data.abs_pose}"
+    num_episodes: 16000
+    episode_length: 50
+    num_workers: 48
+    frequency: 1 # DT dynamics frequency
+  ct_dyn:
+    # out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}_${data.abs_pose}"
+    out_path: "output/data/${settings.task_name}_freq${data.ct_dyn.frequency}_${data.abs_pose}_shift"
+    num_episodes: 16000
+    episode_length: 50
+    episode_shift: 3
+    num_workers: 48
+    frequency: 10 # CT dynamics frequency
+  ct_ctl:
+    # out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_${data.abs_pose}_063851"
+    # use_nn: True
+    out_path: "output/data/${settings.task_name}_freq${data.ct_ctl.frequency}_ctl_${data.abs_pose}_${data.ct_ctl.use_nn}_shift_063851"
+    use_nn: False
+    model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.003_mid_0.08_0.05_0.003_True_20260127_051024"
+    # model_dir: "output/runs/${settings.task_name}_ct_dyn/lr0.003_mid_0.08_0.05_0.003_True_20260109_063851"
+    num_episodes: 16000
+    episode_length: 30
+    episode_shift: 3
+    num_workers: 48
+    dyn_frequency: 10 # CT dynamics frequency
+    frequency: 10 # CT control frequency, should be equal to dyn_frequency or its divisor
+  training: True
+  saving: True
+  visualizing: False
+  gif: False
+  scale: 100 # normalize the data, (x,y)/scale
+  window_size: 500
+  enlarge_factor_for_gen: 4
+
+train_dt_dyn:
+  out_dir: "output/runs/${settings.task_name}_dt_dyn"
+  data_dir: ${data.dt_dyn.out_path}
+  data_augment: True
+  pred_mode: "pose" # {"state","pose"}
+  train_valid_ratio: 0.9
+  architecture: [96, 96, 96]
+  frequency: ${data.dt_dyn.frequency}
+  abs_pose: ${data.abs_pose}
+  delta_u: True
+  n_history: 1
+  n_rollout_valid: 10
+  horizon_scheduler:
+    type: "log" # log, linear, const
+    T_init: 1
+    T_final: 15
+    log_alpha: 1.0
+  step_weight_ub: 2
+  noise: 0.005 # std of the Gaussian noise to training data
+  lr_scheduler:
+    type: "cos" # cos, linear, const
+    lr_init: 0.001
+    lr_final: 0.0001
+  n_epoch: 20
+  reach:
+    mode: "mid" # {"none","mid","after"}
+    every: 1 # only for "mid" and "after" mode, every N batches
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps_init: 0.08
+    eps_final: 0.05
+    # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
+    weight: 0.003
+    # batch_size: 8
+  batch_size: 128
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
+  wandb:
+    enabled: true
+    project: "${settings.task_name}_dt_dyn"
+    run_name: "${train_dt_dyn.architecture}_${train_dt_dyn.horizon_scheduler.type}_${train_dt_dyn.lr_scheduler.type}_${train_dt_dyn.batch_size}_${train_dt_dyn.reach.mode}_${train_dt_dyn.reach.every}_${train_dt_dyn.reach.after}_eps${train_dt_dyn.reach.eps_init}_${train_dt_dyn.reach.eps_final}_w${train_dt_dyn.reach.weight}_j${train_dt_dyn.lam_jac_reg}_${train_dt_dyn.delta_u}_${train_dt_dyn.abs_pose}"
+    mode: "online"               # {"online","offline","disabled"}
+    log_every: 50                # log every N training iterations
+    save_checkpoints: true       # save model checkpoints to wandb  
+
+train_ct_dyn:
+  out_dir: "output/runs/${settings.task_name}_ct_dyn"
+  data_dir: ${data.ct_dyn.out_path}
+  data_augment: True
+  pred_mode: "pose" # {"state","pose"}
+  train_valid_ratio: 0.9
+  architecture: [64, 64]
+  frequency: ${data.ct_dyn.frequency}
+  ode_step_size_controller: "pid" # {"const","pid"}
+  abs_pose: ${data.abs_pose}
+  delta_u: True
+  n_history: 1
+  n_rollout_valid: 20
+  horizon_scheduler:
+    type: "log" # log, linear, const
+    T_init: 1
+    T_final: 20
+    log_alpha: 1.0
+  step_weight_ub: 2
+  noise: 0.005 # std of the Gaussian noise to training data
+  lr_scheduler:
+    type: "cos" # cos, linear, const
+    lr_init: 0.003
+    lr_final: 0.0001
+  n_epoch: 10
+  reach:
+    mode: "mid" # {"none","mid","after"}
+    every: 1 # only for "mid" and "after" mode, every N batches
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps_init: 0.08
+    eps_final: 0.05
+    # splits: {0: 2, 1: 2, 2: 2}
+    weight: 0.002
+    # batch_size: 8
+    # below for CT reachability settings
+    init_remainder: ${reachability.init_remainder}
+    frr_rounds: ${reachability.frr_rounds}
+    frr_stop_ratio: ${reachability.frr_stop_ratio}
+    sr_window_size: ${reachability.sr_window_size}
+  batch_size: 128
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
+  wandb:
+    enabled: true
+    project: "${settings.task_name}_ct_dyn"
+    run_name: "lr${train_ct_dyn.lr_scheduler.lr_init}_${train_ct_dyn.reach.mode}_${train_ct_dyn.reach.eps_init}_${train_ct_dyn.reach.eps_final}_${train_ct_dyn.reach.weight}_${train_ct_dyn.abs_pose}"
+    mode: "online"               # {"online","offline","disabled"}
+    log_every: 50                # log every N training iterations
+    save_checkpoints: true       # save model checkpoints to wandb  
+
+train_ct_ctl:
+  out_dir: "output/runs/${settings.task_name}_ct_ctl"
+  data_dir: ${data.ct_ctl.out_path}
+  ct_dyn_dir: ${data.ct_ctl.model_dir}
+  data_augment: False
+  pred_mode: "pose" # {"state","pose"}
+  train_valid_ratio: 0.9
+  architecture: [64, 64]
+  ctl_frequency: ${data.ct_ctl.frequency}
+  target_frequency: 1
+  abs_pose: ${data.abs_pose}
+  ref_action: False
+  use_delta: True
+  loss_mode: "u"
+  n_history: 1
+  n_rollout_valid: 10
+  horizon_scheduler:
+    type: "log" # log, linear, const
+    T_init: 5
+    T_final: 10
+    log_alpha: 1.0
+  step_weight_ub: 2
+  noise: 0.005 # std of the Gaussian noise to training data
+  lr_scheduler:
+    type: "cos" # cos, linear, const
+    lr_init: 0.001
+    lr_final: 0.0001
+  n_epoch: 15
+  reach:
+    mode: "mid" # {"none","mid","after"}
+    every: 1 # only for "mid" and "after" mode, every N batches
+    after: 0.6 # only for "after" mode, after N*n_epoch epochs
+    eps_init: 0.03
+    eps_final: 0.01
+    # splits: {0: 2, 1: 2, 2: 2, 3: 2, 4: 2, 5: 2, 6: 2, 7: 2}
+    weight: 0.001
+    # batch_size: 8
+    # below for CT reachability settings
+    init_remainder: ${reachability.init_remainder}
+    frr_rounds: ${reachability.frr_rounds}
+    frr_stop_ratio: ${reachability.frr_stop_ratio}
+    sr_window_size: ${reachability.sr_window_size}
+
+  batch_size: 128
+  lam_jac_reg: 0.0e-3 # jacobian regularization weight
+  wandb:
+    enabled: true
+    project: "${settings.task_name}_ct_ctl"
+    run_name: "${data.ct_ctl.use_nn}_${train_ct_ctl.horizon_scheduler.type}_${train_ct_ctl.horizon_scheduler.T_final}_lr${train_ct_ctl.lr_scheduler.lr_init}_${train_ct_ctl.loss_mode}_${train_ct_ctl.ref_action}_${train_ct_ctl.use_delta}_${train_ct_ctl.reach.mode}_${train_ct_ctl.reach.eps_init}_${train_ct_ctl.reach.eps_final}_${train_ct_ctl.reach.weight}_${train_ct_ctl.abs_pose}"
+    mode: "online"               # {"online","offline","disabled"}
+    log_every: 50                # log every N training iterations
+    save_checkpoints: true       # save model checkpoints to wandb  
+
+reachability:
+  eps: 0.05
+  # init_splits: {}
+  # refine_splits: {0: 2, 1: 2, 2: 2}
+  # below for CT reachability settings
+  init_remainder: 5e-2
+  frr_rounds: 3
+  frr_stop_ratio: 0.95
+  sr_window_size: 100
+
+testing:
+  mode: "certified" # {"certified","regular"}
+  # certified test models
+  certified:
+    ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_mid_0.08_0.05_0.003_True_20260127_051024"
+    dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_mid_1_0.6_eps0.08_0.05_w0.003_j0.0_True_True_20260127_221448"
+    ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_mid_0.03_0.01_0.001_True_20260128_034342"
+
+  # regular test models
+  regular:
+    ct_dyn_dir: "${train_ct_dyn.out_dir}/lr0.003_none_0.08_0.05_0.002_True_20260127_221601"
+    dt_dyn_dir: "${train_dt_dyn.out_dir}/[96,_96,_96]_log_cos_128_none_1_0.6_eps0.08_0.05_w0.0025_j0.0_True_True_20260127_225748"
+    ct_ctl_dir: "${train_ct_ctl.out_dir}/log_10_lr0.001_tu_False_True_none_0.05_0.03_0.001_True_20260128_045222"
+
+planning:
+  out_path: "output/rss/planning/${settings.task_name}/${planning.test_id}_${planning.disturbance.type}_${planning.disturbance.init}_${planning.disturbance.inter}_${planning.planner}_${planning.n_sample}_${planning.enable_ctl}_${planning.refinement.enable}_${planning.refinement.reach_in_obj.enable}_${planning.reach_in_obj.enable}"
+  add_timestamp: true
+  horizon: 10
+  max_steps: 30
+  n_act_step: 1
+  num_test: 1
+  test_id: 5
+  action_dim: ${data.action_dim}
+  action_bound: ${data.action_bound}
+  verbose: False
+
+  disturbance:
+    type: "uniform" # {"none","normal","uniform"}
+    init: 0.05
+    inter: 0.015
+
+  hole:
+    enable: true
+    center: [250, 500]
+    size: [60, 80] # width, height
+    penalty: 5
+    enforce_reach_steps: 5
+
+  enable_ctl: true
+  init_follow_steps: 3
+  reach_in_obj:
+    enable: false
+    eps: ${planning.disturbance.init}
+    weight: 0.1
+    loss_max: 10
+    clip: true
+    splits: {}
+    collision_penalty: 0.5
+  refinement:
+    enable: false
+    lr: 0.02
+    n_iter: 10
+    reach_in_obj:
+      enable: true
+      weight: 20
+      loss_max: 10
+      clip: false
+      splits: {0: 4, 1: 4, 2: 4}
+      collision_penalty: 1
+  vis_reach_steps: ${planning.hole.enforce_reach_steps}
+
+  cost_norm: 1
+  only_final_cost: False
+  n_sample: 1000
+  n_update_iter: 20
+  
+  planner: "mppi" # {"mppi","cem"}
+  use_last: False
+  reject_bad: True
+  mppi:
+    reward_weight: 50
+    noise_level: 0.2
+    # noise_decay: 0.95
+    # beta_filter: 0.7
+  cem:
+    elite_ratio: 0.05
+    min_n_elites: 10
+    cov_jitter: 1e-2
