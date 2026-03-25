@@ -33,7 +33,7 @@ from gpu_sls.gpu_admm import ADMMConfig
 from gpu_sls.gpu_sls import SLSConfig
 from gpu_sls.gpu_sqp import SQPConfig
 from gpu_sls.generic_mpc import GenericMPC, MPCConfig
-
+Y_MIN = 0.65
 
 def wrap_dt_dyn_as_dynamics(dt_dyn):
     """
@@ -160,9 +160,8 @@ def main(config: DictConfig):
         "save_img": True,
         "enable_vis": False,
         "window_size": data_config["window_size"],
-
-        # --- ADD THESE ---
-        "y_constraint": 0.6,          # the actual constraint (world units)
+        "show_pose_center": True,
+        "y_constraint": Y_MIN,          # the actual constraint (world units)
         "constraint_scale": scale,    # converts world → pixels
         "constraint_color": (0, 0, 255, 255),  # red line
     }
@@ -210,7 +209,7 @@ def main(config: DictConfig):
 
     admm_cfg = ADMMConfig(
         eps_abs=1e-2,
-        eps_rel=1e-2,
+        eps_rel=0,
         rho_max=1e3,
         max_iterations=400,
         rho_update_frequency=20,
@@ -218,25 +217,25 @@ def main(config: DictConfig):
     )
 
     sls_cfg = SLSConfig(
-        max_sls_iterations=1,
+        max_sls_iterations=2,
         sls_primal_tol=1e-2,
-        enable_fastsls=True,
+        enable_fastsls=False,
         initialize_nominal=True,
         warm_start=False,
         rti=False,
+        enable_linearization_bounds=False,
     )
 
     sqp_cfg = SQPConfig(
-        max_sqp_iterations=50,
+        max_sqp_iterations=100,
         warm_start=False,
         feas_tol=1e-2,
         step_tol=1e-4,
         line_search=True,
     )
-
     x_max = jnp.array([1000.0, 1000.0, 4 * jnp.pi, 1000.0, 1000.0], dtype=jnp.float64)
     x_min = -x_max
-    x_min = x_min.at[1].set(0.6)   # enforce object y >= 0.5
+    # x_min = x_min.at[1].set(Y_MIN)   # enforce object y >= 0.5
     constraints_all = make_state_box_constraints(x_min, x_max)
     constraints = constraints_all
     # obstacles = jnp.array([
@@ -372,14 +371,13 @@ def main(config: DictConfig):
 
         # controller.X_in = X_init
         # controller.U_in = U_init
-        y_min = 0.6
 
         X_ref = X_init.at[:, 1].set(
-            jnp.maximum(X_init[:, 1], y_min)
+            jnp.maximum(X_init[:, 1], Y_MIN)
         )
 
         reference = X_ref
-        reference = X_init
+        # reference = X_init
 
         try:
             u0, X_pred, U_pred, *solver_info = controller.run(
