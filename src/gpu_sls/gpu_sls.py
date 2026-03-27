@@ -304,71 +304,6 @@ def add_obstacle_tightenings(
     tightened = dist - radii[None, :] - over
     return jnp.concatenate([tightened_constraints, tightened], axis=1)
 
-def estimate_remainder_TM(tm_fn, x_lo, x_up, state_dim, splits_cfg={}):
-    B, D = x_lo.shape
-
-    # Step boxes are over (time + D variables) if your TM system uses that convention.
-    step_lo, step_hi, _, _ = make_step_boxes(B, D, h=1.0)   # typically (B, D+1)
-
-    # Nominal linear TM around center of the box (variables only)
-    c = 0.5 * (x_lo + x_up)          # (B, D)
-    S = 0.5 * (x_up - x_lo)          # (B, D)
-    x_tm0 = build_linear_tm(c, S)
-
-    # Propagate nominal TM
-    x_tmnext_nom = tm_fn(x_tm0, step_lo, step_hi)
-
-    c_tm = x_tmnext_nom.P.c
-    # NOTE: broadcast-safe scaling
-    J_tm = x_tmnext_nom.P.L[:, :, 1:] / S[:, None, :]   # (B, out_dim, D)
-
-    A_tm = J_tm[:, :state_dim, :state_dim]
-    B_tm = J_tm[:, :state_dim, state_dim:]
-
-    # ---- Split the initial set to tighten remainder bounds ----
-    # Split only the non-time dimensions of the *step* box:
-    #   step_lo[:, 1:] and step_hi[:, 1:] are (B, D)
-    step_lo_split, step_hi_split = prepare_initial_set(step_lo[:, 1:], step_hi[:, 1:], splits_cfg)
-    # Add time back as the first coordinate (keep it fixed at 0 over the step)
-    step_lo_split = jnp.concatenate([jnp.zeros((step_lo_split.shape[0], 1), dtype=step_lo_split.dtype),
-                                     step_lo_split], axis=-1)
-    step_hi_split = jnp.concatenate([jnp.zeros((step_hi_split.shape[0], 1), dtype=step_hi_split.dtype),
-                                     step_hi_split], axis=-1)
-
-    BM = step_lo_split.shape[0]
-    assert BM % B == 0
-    M = BM // B
-
-    # Repeat the same nominal TM for each split box (batch becomes B*M)
-    x_tm0_split = LinTM.repeat(x_tm0, M)
-
-    x_tmnext_split: LinTM = tm_fn(x_tm0_split, step_lo_split, step_hi_split)
-
-    # Remainder bounds aggregated back to B
-    remainder = x_tmnext_split.R
-    out_dim = remainder.lo.shape[-1]
-
-    agg_r_lb = jnp.min(remainder.lo.reshape((B, M, out_dim)), axis=1)
-    agg_r_ub = jnp.max(remainder.hi.reshape((B, M, out_dim)), axis=1)
-    r_bound = jnp.maximum(jnp.abs(agg_r_lb), jnp.abs(agg_r_ub))   # (B, out_dim)
-
-    # Output interval bounds: MUST evaluate on split boxes, not unsplit
-    output_interval = x_tmnext_split.eval_interval(step_lo_split, step_hi_split)
-    out_dim2 = output_interval.lo.shape[-1]
-
-    agg_output_lb = jnp.min(output_interval.lo.reshape((B, M, out_dim2)), axis=1)
-    agg_output_ub = jnp.max(output_interval.hi.reshape((B, M, out_dim2)), axis=1)
-
-    return_dict = {
-        "c_tm": c_tm,
-        "A_tm": A_tm,
-        "B_tm": B_tm,
-        "output_lb": agg_output_lb[:, :state_dim],
-        "output_ub": agg_output_ub[:, :state_dim],
-    }
-
-    return r_bound[:, :state_dim], return_dict
-
 def get_tube_width(Phi_x, Phi_u, E):
     # Phi_x: [T+1, T+1, nx, nw]
     # Phi_u: [T,   T+1, nu, nw]
@@ -409,9 +344,9 @@ def get_combined_disturbance(
 
     z_lo = z_center - z_width
     z_up = z_center + z_width
-
+    # jax.debug.print("Z_center: {}", z_center)
     r_bound = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo, z_up)   # [T+1, nx]
-    jax.debug.print("{}", r_bound)
+    # jax.debug.print("Remainder: {}", r_bound)
     diag_r = jax.vmap(jnp.diag)(r_bound)                              # [T+1, nx, nx]
 
     E_combined = jnp.concatenate([E, diag_r], axis=2)                # [T+1, nx, 2nx]

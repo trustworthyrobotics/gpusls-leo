@@ -4,3 +4,6 @@
 [submodule "gpu_sls/src/gpu_sls/external/linearization_sls"]
 	path = gpu_sls/src/gpu_sls/external/linearization_sls
 	url = https://github.com/keyis2/linearization_sls
+[submodule "src/gpu_sls/external/ReachDev"]
+	path = src/gpu_sls/external/ReachDev
+	url = https://github.com/jeff300fang/ReachDev_sls.git

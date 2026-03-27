@@ -10,6 +10,8 @@ import jax.numpy as jnp
 
 import gpu_sls.gpu_sqp
 from gpu_sls.external.linearization_sls.test_path import remainder_bound_path_based
+from gpu_sls.external.linearization_sls.neural_wrapper import make_remainder_bound_builder
+from gpu_sls.external.linearization_sls.neural.load import load_model
 
 @dataclass
 class MPCConfig:
@@ -44,7 +46,9 @@ class GenericMPC:
         num_constraints: int,
         disturbance,
         X_in, U_in,
+        neural_dynamics: bool = False,
         shift: int = 1,
+        model_dir = "",
     ):
         self.sls_config = sls_config
         self.sqp_config = sqp_config
@@ -85,7 +89,13 @@ class GenericMPC:
             t_dim=1,
             t_as_scalar=True
         )
-        remainder_func = partial(remainder_bound_path_based, f_flat, state_dim=config.n)
+        if not neural_dynamics:
+            remainder_func = partial(remainder_bound_path_based, f_flat, state_dim=config.n)
+        else:
+            # TODO: Remove this hardcoded
+            model = load_model(model_dir)
+            split_budget = (5, 5, 4, 1, 4, 1, 1)
+            remainder_func = make_remainder_bound_builder(model, split_budget=split_budget)
         splts_cfg = (4, 4, 4, 4)
 
         work = partial(
