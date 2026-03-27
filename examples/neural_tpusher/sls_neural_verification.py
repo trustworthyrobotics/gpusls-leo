@@ -51,6 +51,78 @@ Y_MIN = 0.70
 X_MAX = 10.0
 NUM_RANDOM = 5
 
+import os
+import numpy as np
+import pymunk
+
+
+def visualize_x_sequence(env, xs, gif_path="output/x_rollout.gif", fps=10, has_pusher=True, scale=100):
+    """
+    Render a GIF from a sequence of states without simulating physics.
+
+    Parameters
+    ----------
+    env : simulator instance
+        Existing T_Sim / Base_Sim-style environment.
+    xs : array-like, shape (T, nx)
+        Sequence of states.
+        Expected format:
+            if has_pusher=True:
+                [obj_x, obj_y, obj_theta, pusher_x, pusher_y]
+            if has_pusher=False:
+                [obj_x, obj_y, obj_theta]
+    gif_path : str
+        Output path for the gif.
+    fps : int
+        Frames per second for the gif.
+    has_pusher : bool
+        Whether xs includes pusher position.
+
+    Returns
+    -------
+    None
+    """
+    xs = np.asarray(xs)
+
+    if xs.ndim != 2:
+        raise ValueError(f"xs must have shape (T, nx), got {xs.shape}")
+
+    expected_nx = 5 if has_pusher else 3
+    if xs.shape[1] < expected_nx:
+        raise ValueError(
+            f"xs must have at least {expected_nx} columns when has_pusher={has_pusher}, "
+            f"got shape {xs.shape}"
+        )
+
+    if not getattr(env, "SAVE_IMG", False):
+        raise ValueError("env.SAVE_IMG must be True so frames are stored for GIF export.")
+
+    os.makedirs(os.path.dirname(gif_path) or ".", exist_ok=True)
+
+    # clear any old frames
+    env.image_list = []
+
+    for x in xs:
+        # teleport object
+        body = env.obj_list[0][0]
+        body.position = pymunk.Vec2d(float(x[0] * scale), float(x[1] * scale))
+        body.angle = float(x[2])
+        body.velocity = (0.0, 0.0)
+        body.angular_velocity = 0.0
+
+        # teleport pusher if included
+        if has_pusher:
+            px, py = float(x[3] * scale), float(x[4] * scale)
+
+            if env.pusher_body is None:
+                env.add_pusher((px, py))
+            else:
+                env.pusher_body.position = pymunk.Vec2d(px, py)
+                env.pusher_body.velocity = (0.0, 0.0)
+
+        env.render()
+
+    env.save_gif(gif_path, fps=fps)
 
 def step_with_disturbance(
     key: jax.Array,
@@ -352,12 +424,29 @@ def main(config: DictConfig):
             key, x, w = step_with_disturbance(
                 key, x, u, E_sim, dt, i, dynamics=dynamics
             )
+            jax.debug.print("Current state: {}", x)
 
             err = np.abs(np.asarray(X_pred[k + 1] - x))
 
             disturbed[i, k, :] = err
             disturbance_history.append(E_sim @ w)
             xs[i, k] = np.asarray(x)
+
+    env = T_Sim(
+        param_dict=param_dict,
+        init_poses=[init_pose],
+        target_poses=[target_pose],
+        pusher_pos=init_pusher_pos,
+    )
+
+
+    visualize_x_sequence(
+        env,
+        xs=xs[35],
+        gif_path="visualizations/x_rollout.gif",
+        fps=10,
+        has_pusher=True,
+    )
 
     tube = get_trajectory_tubes(Phi_x, EN)
     lower = X_pred - tube

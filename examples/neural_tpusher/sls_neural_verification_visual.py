@@ -73,13 +73,11 @@ def step_with_disturbance(
     n = x.shape[0]
     dtype = x.dtype
 
-    # Random disturbance
     key, subkey = jax.random.split(key)
     w_random = jax.random.uniform(
         subkey, (n,), dtype=dtype, minval=-1.0, maxval=1.0
     )
 
-    # All corners of {-1, +1}^n
     combo_indices = jnp.arange(2**n)
     bits = ((combo_indices[:, None] >> jnp.arange(n)) & 1)
     adv_table = (2.0 * bits - 1.0).astype(dtype)
@@ -94,7 +92,11 @@ def step_with_disturbance(
     return key, x_next, w
 
 
-@hydra.main(version_base=None, config_path=os.path.join(os.getcwd(), "configs"), config_name="T_pushing.yaml")
+@hydra.main(
+    version_base=None,
+    config_path=os.path.join(os.getcwd(), "configs"),
+    config_name="T_pushing.yaml",
+)
 def main(config: DictConfig):
     if "testing" in config:
         testing_config = config["testing"]
@@ -197,7 +199,10 @@ def main(config: DictConfig):
         line_search=False,
     )
 
-    x_max = jnp.array([1000.0, 1000.0, 4 * jnp.pi, 1000.0, 1000.0], dtype=jnp.float64)
+    x_max = jnp.array(
+        [1000.0, 1000.0, 4 * jnp.pi, 1000.0, 1000.0],
+        dtype=jnp.float64,
+    )
     x_min = -x_max
     x_min = x_min.at[1].set(Y_MIN)
     x_max = x_max.at[0].set(X_MAX)
@@ -205,7 +210,6 @@ def main(config: DictConfig):
     constraints = constraints_all
 
     obstacles = jnp.zeros((0, 3))
-
     num_constraints = 2 * n + obstacles.shape[0]
 
     key = jax.random.PRNGKey(0)
@@ -215,13 +219,9 @@ def main(config: DictConfig):
     E_sim = alpha_sim * jnp.eye(n, dtype=jnp.float64)
     disturbance = make_constant_disturbance(n=n, alpha=alpha_sim)
 
-    # Q_bar = jnp.broadcast_to(jnp.eye(n), (horizon + 1, n, n))
     R_bar = jnp.broadcast_to(jnp.eye(nu), (horizon, nu, nu))
-
     Q_single = jnp.diag(jnp.array([10.0, 10.0, 0.1, 100.0, 100.0]))
     Q_bar = jnp.broadcast_to(Q_single, (horizon + 1, n, n))
-    # R_single = jnp.diag(jnp.array([0.01, 0.01]))
-    # R_bar = jnp.broadcast_to(R_single, (horizon, nu, nu))
 
     controller = GenericMPC(
         sls_cfg,
@@ -260,9 +260,8 @@ def main(config: DictConfig):
         horizon=horizon,
     )
 
-    num_test = planning_config["num_test"]
-    test_id = planning_config.get("test_id", 0)
     num_test = 1
+    test_id = planning_config.get("test_id", 0)
     init_pusher_pos_list, init_pose_list, target_pose_list = generate_test_cases(
         seed, num_test, test_id=test_id
     )
@@ -287,89 +286,181 @@ def main(config: DictConfig):
     )
 
     for _ in range(2):
-        env_dict = env.update((init_pusher_pos[0], init_pusher_pos[1]), rel=False)
+        env.update((init_pusher_pos[0], init_pusher_pos[1]), rel=False)
 
     planning_res_list = []
     gt_states = []
     t = 0
-
     prev_X = None
     prev_U = None
 
-    env_dict = env.get_env_state(not abs_pose)
-    z_cur, env_state, pusher_pos = trans_fn(env_dict)
-    gt_states.append(env_state)
+    # Save first successful SLS solve for tube / adversarial rollout visualization
+    first_sls_result = None
 
-    mppi_key = jax.random.PRNGKey(seed)
+    while t < max_steps:
+        env_dict = env.get_env_state(not abs_pose)
+        z_cur, env_state, pusher_pos = trans_fn(env_dict)
+        gt_states.append(env_state)
 
-    X_init, U_init, planning_res = build_mppi_warmstart(
-        z_cur=z_cur,
-        pusher_pos=pusher_pos,
-        target_obj=target_obj,
-        horizon=horizon,
-        nu=nu,
-        action_lower_lim=action_lower_lim,
-        action_upper_lim=action_upper_lim,
-        prev_U=prev_U,
-        jit_mppi_trajopt=jit_mppi_trajopt,
-        rng_key=mppi_key,
-    )
+        mppi_key = jax.random.PRNGKey(seed + t)
 
-    X_ref = X_init.at[:, 1].set(
-        jnp.maximum(X_init[:, 1], Y_MIN)
-    )
-    X_ref = X_ref.at[:, 0].set(
-        jnp.minimum(X_ref[:, 0], X_MAX)
-    )
+        X_init, U_init, planning_res = build_mppi_warmstart(
+            z_cur=z_cur,
+            pusher_pos=pusher_pos,
+            target_obj=target_obj,
+            horizon=horizon,
+            nu=nu,
+            action_lower_lim=action_lower_lim,
+            action_upper_lim=action_upper_lim,
+            prev_U=prev_U,
+            jit_mppi_trajopt=jit_mppi_trajopt,
+            rng_key=mppi_key,
+        )
 
-    reference = X_ref
+        X_ref = X_init.at[:, 1].set(jnp.maximum(X_init[:, 1], Y_MIN))
+        X_ref = X_ref.at[:, 0].set(jnp.minimum(X_ref[:, 0], X_MAX))
+        reference = X_ref
 
-    u0, X_pred, U_pred, V, backoffs, Phi_x, Phi_u, EN = controller.run(
-        x0=z_cur,
-        reference=reference,
-        parameter=dt,
-    )
+        try:
+            u0, X_pred, U_pred, V, backoffs, Phi_x, Phi_u, EN = controller.run(
+                x0=z_cur,
+                reference=reference,
+                parameter=dt,
+            )
+            solver_status = "sls"
+        except Exception as e:
+            print(f"[WARN] SLS solve raised exception: {e}")
+            u0, X_pred, U_pred = None, None, None
+            Phi_x, Phi_u, EN = None, None, None
+            solver_status = "failed"
 
-    NUM_ADV = 2**n
-    N_ROLLOUTS = NUM_RANDOM + NUM_ADV
-    T_steps = horizon
-    xs = np.full((N_ROLLOUTS, T_steps, n), np.nan, dtype=np.float64)
-    disturbed = np.full((N_ROLLOUTS, T_steps, n), np.nan, dtype=np.float64)
-    stop_steps = np.full((N_ROLLOUTS,), T_steps, dtype=np.int32)
+        if (
+            u0 is None
+            or X_pred is None
+            or U_pred is None
+            or not jnp.all(jnp.isfinite(X_pred))
+            or not jnp.all(jnp.isfinite(U_pred))
+        ):
+            print("[WARN] Falling back to MPPI warmstart.")
+            X_pred = X_init
+            U_pred = U_init
+            u0 = U_pred[0]
+            solver_status = "mppi_fallback"
 
-    for i in range(N_ROLLOUTS):
-        disturbance_history = [jnp.zeros((n,), dtype=jnp.float64)]
-        x = z_cur
-        jax.debug.print("Rolling out iteration {}", i)
+        if solver_status == "sls" and first_sls_result is None:
+            first_sls_result = {
+                "z_cur": z_cur,
+                "X_pred": X_pred,
+                "U_pred": U_pred,
+                "Phi_x": Phi_x,
+                "Phi_u": Phi_u,
+                "EN": EN,
+            }
 
-        for k in range(T_steps):
-            disturbance_feedback = jnp.zeros((nu,), dtype=jnp.float64)
-            for j in range(k + 1):
-                disturbance_feedback = disturbance_feedback + Phi_u[k, j] @ disturbance_history[j]
+        prev_X, prev_U = shift_warmstart(X_pred, U_pred)
 
-            u = U_pred[k] + disturbance_feedback
+        print("=" * 60)
+        print(f"Sim step {t}")
+        print("=" * 60)
+        print(f"Current position: {np.array(z_cur)}")
+        print(f"Goal position:    {np.array(target_obj)}")
+        print(f"MPPI u[0]:        {np.array(U_init[0])}")
+        print(f"SLS  u[0]:        {np.array(u0)}")
+        print(f"Status:           {solver_status}")
+        print("=" * 60)
 
-            key, x, w = step_with_disturbance(
-                key, x, u, E_sim, dt, i, dynamics=dynamics
+        planning_res_list.append({
+            "time_step": t,
+            "warmstart_act_seq": np.array(U_init) * scale,
+            "warmstart_state_seq": np.array(X_init),
+            "act_seq": np.array(U_pred) * scale,
+            "state_seq": np.array(X_pred),
+            "target_state": np.array(target_obj),
+            "planning_res": planning_res,
+            "solver_status": solver_status,
+        })
+
+        for k in range(n_act_step):
+            if t >= max_steps or k >= U_pred.shape[0]:
+                break
+
+            action = np.array(U_pred[k]) * scale
+            next_pusher_pos = np.array(pusher_pos) * scale + action
+
+            env_dict = env.update(
+                (next_pusher_pos[0], next_pusher_pos[1]),
+                rel=False,
+                n_sim_time=1,
             )
 
-            err = np.abs(np.asarray(X_pred[k + 1] - x))
+            z_next, env_state, pusher_pos = trans_fn(env_dict)
+            t += 1
 
-            disturbed[i, k, :] = err
-            disturbance_history.append(E_sim @ w)
-            xs[i, k] = np.asarray(x)
+    # Save environment visualization like the MPC script
+    env.save_gif(os.path.join(out_dir, "sim_vis.gif"), fps=10)
 
-    tube = get_trajectory_tubes(Phi_x, EN)
-    lower = X_pred - tube
-    upper = X_pred + tube
+    # Also run the SLS tube/disturbance visualization from the first successful SLS solve
+    if first_sls_result is not None:
+        z_cur = first_sls_result["z_cur"]
+        X_pred = first_sls_result["X_pred"]
+        U_pred = first_sls_result["U_pred"]
+        Phi_x = first_sls_result["Phi_x"]
+        Phi_u = first_sls_result["Phi_u"]
+        EN = first_sls_result["EN"]
 
-    plot_tube_graph(
-        disturbed,
-        tube,
-        dt,
-        output_folder=os.getcwd(),
-        filename="disturbance_vs_tube_size.png",
-    )
+        NUM_ADV = 2 ** n
+        N_ROLLOUTS = NUM_RANDOM + NUM_ADV
+        T_steps = horizon
+
+        xs = np.full((N_ROLLOUTS, T_steps, n), np.nan, dtype=np.float64)
+        disturbed = np.full((N_ROLLOUTS, T_steps, n), np.nan, dtype=np.float64)
+        stop_steps = np.full((N_ROLLOUTS,), T_steps, dtype=np.int32)
+
+        for i in range(N_ROLLOUTS):
+            disturbance_history = [jnp.zeros((n,), dtype=jnp.float64)]
+            x = z_cur
+            jax.debug.print("Rolling out iteration {}", i)
+
+            for k in range(T_steps):
+                disturbance_feedback = jnp.zeros((nu,), dtype=jnp.float64)
+                for j in range(k + 1):
+                    disturbance_feedback = (
+                        disturbance_feedback + Phi_u[k, j] @ disturbance_history[j]
+                    )
+
+                u = U_pred[k] + disturbance_feedback
+
+                key, x, w = step_with_disturbance(
+                    key, x, u, E_sim, dt, i, dynamics=dynamics
+                )
+
+                err = np.abs(np.asarray(X_pred[k + 1] - x))
+                disturbed[i, k, :] = err
+                disturbance_history.append(E_sim @ w)
+                xs[i, k] = np.asarray(x)
+
+        tube = get_trajectory_tubes(Phi_x, EN)
+        lower = X_pred - tube
+        upper = X_pred + tube
+
+        plot_tube_graph(
+            disturbed,
+            tube,
+            dt,
+            output_folder=os.getcwd(),
+            filename="disturbance_vs_tube_size.png",
+        )
+
+        np.savez(
+            os.path.join(out_dir, "sls_rollout_bundle.npz"),
+            xs=xs,
+            disturbed=disturbed,
+            tube=np.asarray(tube),
+            plan=np.asarray(X_pred),
+            lower=np.asarray(lower),
+            upper=np.asarray(upper),
+            dt=float(dt),
+        )
 
     env.close()
 
