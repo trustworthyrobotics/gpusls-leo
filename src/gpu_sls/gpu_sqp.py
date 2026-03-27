@@ -8,13 +8,87 @@ from jax.tree_util import register_pytree_node_class
 from trajax.optimizers import linearize, quadratize, vectorize
 
 from gpu_sls.external.primal_dual_ilqr.primal_dual_ilqr.optimizers import (
-    line_search,
     merit_rho,
     model_evaluator_helper,
     slope,
 )
 from gpu_sls.gpu_admm import ADMMConfig, constrained_solve
-from gpu_sls.gpu_sls import SLSConfig, sls_solve_gpu
+from gpu_sls.gpu_sls import SLSConfig, sls_solve_gpu, get_tube_width
+
+
+@partial(jit, static_argnums=(0, 1))
+def line_search(
+    merit_function,
+    model_evaluator,
+    X_in,
+    U_in,
+    V_in,
+    dX,
+    dU,
+    dV,
+    current_merit,
+    current_g,
+    current_c,
+    merit_slope,
+    armijo_factor,
+    alpha_0,
+    alpha_mult,
+    alpha_min,
+):
+    """Performs a primal-dual line search on an augmented Lagrangian merit function.
+
+    Args:
+      merit_function:  merit function mapping V, g, c, X, U to the merit scalar.
+      X_in:            [T+1, n]      numpy array.
+      U_in:            [T, m]        numpy array.
+      V_in:            [T+1, n]      numpy array.
+      dX:              [T+1, n]      numpy array.
+      dU:              [T, m]        numpy array.
+      dV:              [T+1, n]      numpy array.
+      current_merit:   the merit function value at X, U, V.
+      current_g:       the cost value at X, U, V.
+      current_c:       the constraint values at X, U, V.
+      merit_slope:     the directional derivative of the merit function.
+      armijo_factor:   the Armijo parameter to be used in the line search.
+      alpha_0:         initial line search value.
+      alpha_mult:      a constant in (0, 1) that gets multiplied to alpha to update it.
+      alpha_min:       minimum line search value.
+
+    Returns:
+      X: [T+1, n]     numpy array, representing the optimal state trajectory.
+      U: [T, m]       numpy array, representing the optimal control trajectory.
+      V: [T+1, n]     numpy array, representing the optimal multiplier trajectory.
+      new_g:          the cost value at the new X, U, V.
+      new_c:          the constraint values at the new X, U, V.
+      no_errors:      whether no error occurred during the line search.
+    """
+
+    def continuation_criterion(inputs):
+        _, _, _, _, _, new_merit, alpha = inputs
+        return jnp.logical_and(
+            new_merit > current_merit + alpha * armijo_factor * merit_slope,
+            alpha > alpha_min,
+        )
+
+    def body(inputs):
+        _, _, _, _, _, _, alpha = inputs
+        alpha *= alpha_mult
+        X_new = X_in + alpha * dX
+        U_new = U_in + alpha * dU
+        V_new = V_in + alpha * dV
+        new_g, new_c = model_evaluator(X_new, U_new)
+        new_merit = merit_function(V_new, new_g, new_c, X_new, U_new)
+        new_merit = jnp.where(jnp.isnan(new_merit), current_merit, new_merit)
+        return X_new, U_new, V_new, new_g, new_c, new_merit, alpha
+
+    X, U, V, new_g, new_c, new_merit, alpha = lax.while_loop(
+        continuation_criterion,
+        body,
+        (X_in, U_in, V_in, current_g, current_c, jnp.inf, alpha_0 / alpha_mult),
+    )
+    no_errors = alpha > alpha_min
+
+    return X, U, V, new_g, new_c, no_errors
 
 
 @register_pytree_node_class
@@ -74,14 +148,47 @@ def add_obstacle_constraints(C: jnp.ndarray, D: jnp.ndarray, f: jnp.ndarray,
     
     return C_all, D_all, f_all
 
-def merit_function_factory(rho_merit):
-    def merit_fn(V, g, c):
-        return g + jnp.sum(V * c) + 0.5 * rho_merit * jnp.sum(c * c)
+def merit_function_factory(rho_merit, lambda_rem, remainder_func, eps_rem):
+    def merit_fn(V, g, c, X, U):
+        r = remainder_penalty(X, U, eps_rem, remainder_func)
+        return g + jnp.sum(V * c) + 0.5 * rho_merit * jnp.sum(c * c) + lambda_rem * r
     return merit_fn
 
-@partial(jit, static_argnums=(0, 1, 2, 3, 4, 5, 6, 7, 8))
+@partial(jax.jit, static_argnames=("remainder_func",))
+def remainder_penalty(X_, U_, eps_, remainder_func):
+    T = U_.shape[0]
+    t = jnp.arange(T + 1)[:, None]
+    U_pad_ = jnp.pad(U_, ((0, 1), (0, 0)))
+    z_nom_ = jnp.concatenate([X_, U_pad_, t], axis=1)
+    z_lo_ = z_nom_ - eps_
+    z_up_ = z_nom_ + eps_
+    r_bound_ = jax.vmap(remainder_func, in_axes=(0,0))(z_lo_, z_up_)
+    return jnp.sum(r_bound_)
+
+
+@partial(jax.jit, static_argnames=("remainder_func",))
+def get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, remainder_func):
+    T = U.shape[0]
+    nu = U.shape[1]
+    t = jnp.arange(T + 1, dtype=X.dtype)[:, None]
+    t_width = jnp.zeros_like(t)
+    x_tube_widths, u_tube_widths = get_tube_width(Phi_x_prev, Phi_u_prev, E_prev)
+    u_width_pad = jnp.concatenate(
+        [u_tube_widths, jnp.zeros((1, nu), dtype=u_tube_widths.dtype)],
+        axis=0
+    )
+    z_width  = jnp.concatenate([x_tube_widths, u_width_pad, t_width], axis=-1)
+    _, (grad_X_rem, grad_U_rem) = jax.value_and_grad(
+        remainder_penalty,
+        argnums=(0, 1)
+    )(X, U, z_width, remainder_func)
+    grad_X_rem = grad_X_rem.at[0].set(0.0)
+    return grad_X_rem, grad_U_rem
+
+
+@partial(jit, static_argnums=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9))
 def compute_search_direction(
-    sls_config: SLSConfig, admm_config: ADMMConfig,
+    sqp_config: SQPConfig, sls_config: SLSConfig, admm_config: ADMMConfig,
     cost, dynamics, hessian_approx,
     constraints, disturbance, remainder_func, splits_cfg,
     sqp_iteration,
@@ -89,7 +196,7 @@ def compute_search_direction(
     x0, X, U, V, c,
     w, y, rho,
     Q_bar, R_bar,
-    h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev,
+    h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev, Phi_x_prev, Phi_u_prev,
 ):
     T = U.shape[0]
     nx = X.shape[1]
@@ -110,6 +217,20 @@ def compute_search_direction(
     dynamics_linearizer = linearize(dynamics)
     q, r_pad = linearizer(X, pad(U), jnp.arange(T + 1), pad(V[1:]), V)
     r = r_pad[:-1]
+    if sls_config.enable_linearization_gradients:
+        grad_X_rem, grad_U_rem = get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, remainder_func)
+        t = sqp_iteration / jnp.maximum(
+            sls_config.max_initial_sqp_iterations + sqp_config.max_sqp_iterations - 1,
+            1,
+        )
+        decay = jnp.maximum(0.01, (1.0 - t) ** 2)
+        weight_x = decay * sls_config.lambda_rem_x
+        weight_u = decay * sls_config.lambda_rem_u
+        weight_x = weight_x[:, None]   # [T, 1]
+        weight_u = weight_u[:, None]   # [T, 1]
+        q = q + weight_x * grad_X_rem
+        r = r + weight_u * grad_U_rem
+
     A_pad, B_pad = dynamics_linearizer(X, pad(U), jnp.arange(T + 1))
     A = A_pad[:-1]
     B = B_pad[:-1]
@@ -196,7 +317,7 @@ def sqp(
             rho0 = lax.select(warm_flag, rho, jnp.asarray(admm_config.initial_rho, dtype=rho.dtype))
             h_ct_ws = backoffs
             dX, dU, dV, q, r, w1, y1, rho1, backoffs1, Phi_x1, Phi_u1, betaN, muN, EN = compute_search_direction(
-                sls_config, admm_config,
+                sqp_config, sls_config, admm_config,
                 _cost, _dynamics, _hessian_approx,
                 constraints, disturbance,
                 remainder_func, splits_cfg,
@@ -205,7 +326,7 @@ def sqp(
                 x0, X_curr, U_curr, V_curr, c,
                 w0, y0, rho0,
                 Q_bar, R_bar,
-                h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev
+                h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev, Phi_x, Phi_u
             )
 
             step = jnp.maximum(
@@ -228,8 +349,22 @@ def sqp(
             g, c = model_evaluator(X_curr, U_curr)
 
             rho_merit = merit_rho(c, dV)
-            merit_fn  = merit_function_factory(rho_merit)
-            current_merit = merit_fn(V_curr, g, c)
+
+            t_width = jnp.zeros((X_curr.shape[0], 1), dtype=X_curr.dtype)
+            x_tube_widths, u_tube_widths = get_tube_width(Phi_x, Phi_u, E_prev)
+            u_width_pad = jnp.concatenate(
+                [u_tube_widths, jnp.zeros((1, U_curr.shape[1]), dtype=u_tube_widths.dtype)],
+                axis=0,
+            )
+            z_width = jnp.concatenate([x_tube_widths, u_width_pad, t_width], axis=-1)
+
+            merit_fn = merit_function_factory(
+                rho_merit,
+                sls_config.lambda_rem,
+                remainder_func,
+                z_width,
+            )
+            current_merit = merit_fn(V_curr, g, c, X_curr, U_curr)
             merit_slope = slope(dX, dU, dV, c, q, r, rho_merit)
             last_iter = (i == (sqp_config.max_sqp_iterations + sls_config.max_initial_sqp_iterations - 1))
             do_ls = jnp.logical_and(jnp.array(bool(sqp_config.line_search)), jnp.logical_not(last_iter))
@@ -252,7 +387,6 @@ def sqp(
                 return (X_curr + dX, U_curr + dU, V_curr + dV)
 
             X_next, U_next, V_next = lax.cond(do_ls, ls_branch, fullstep_branch, operand=None)
-
 
             w_next = w1
             y_next = y1

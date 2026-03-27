@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 
 import jax
@@ -24,6 +24,10 @@ class SLSConfig:
     initialize_nominal: bool = True
     max_initial_sqp_iterations: int = 0
     enable_linearization_bounds: bool = False
+    enable_linearization_gradients: bool = False
+    lambda_rem_x: jnp.ndarray = field(default_factory=lambda: jnp.array(0.0))
+    lambda_rem_u: jnp.ndarray = field(default_factory=lambda: jnp.array(0.0))
+
 
 
 @jax.jit
@@ -358,7 +362,7 @@ def get_combined_zeros(E):
     return jnp.concatenate([E, zeros], axis=2)
 
 
-@partial(jit, static_argnums=(0, 1, 16, 17))
+@partial(jit, static_argnums=(0, 1, 17))
 def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
                        R: jnp.ndarray, r: jnp.ndarray,
                        M: jnp.ndarray,

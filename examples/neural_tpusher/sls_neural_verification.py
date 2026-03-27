@@ -259,14 +259,17 @@ def main(config: DictConfig):
         warm_start=False,
         rti=False,
         enable_linearization_bounds=True,
+        enable_linearization_gradients=True,
+        lambda_rem_x=jnp.array([10.0, 10.0, 0.1, 100.0, 100.0]),
+        lambda_rem_u=jnp.array([0.1, 0.1])
     )
 
     sqp_cfg = SQPConfig(
-        max_sqp_iterations=10,
+        max_sqp_iterations=40,
         warm_start=False,
         feas_tol=1e-2,
         step_tol=1e-4,
-        line_search=False,
+        line_search=True,
     )
 
     x_max = jnp.array([1000.0, 1000.0, 4 * jnp.pi, 1000.0, 1000.0], dtype=jnp.float64)
@@ -289,7 +292,6 @@ def main(config: DictConfig):
 
     # Q_bar = jnp.broadcast_to(jnp.eye(n), (horizon + 1, n, n))
     R_bar = jnp.broadcast_to(jnp.eye(nu), (horizon, nu, nu))
-
     Q_single = jnp.diag(jnp.array([10.0, 10.0, 0.1, 100.0, 100.0]))
     Q_bar = jnp.broadcast_to(Q_single, (horizon + 1, n, n))
     # R_single = jnp.diag(jnp.array([0.01, 0.01]))

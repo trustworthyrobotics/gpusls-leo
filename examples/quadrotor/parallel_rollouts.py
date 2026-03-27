@@ -378,7 +378,7 @@ def main():
         rho_max=1e6,
         max_iterations=400,
         rho_update_frequency=20,
-        initial_rho=1.0,
+        initial_rho=30.0,
     )
 
     sls_cfg = SLSConfig(
@@ -390,6 +390,8 @@ def main():
         warm_start=False,
         rti=False,
         enable_linearization_bounds=True,
+        enable_linearization_gradients=True,
+        lambda_rem=2.0,
     )
 
     sqp_cfg = SQPConfig(
