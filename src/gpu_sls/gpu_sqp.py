@@ -224,12 +224,9 @@ def compute_search_direction(
             1,
         )
         decay = jnp.maximum(0.01, (1.0 - t) ** 2)
-        weight_x = decay * sls_config.lambda_rem_x
-        weight_u = decay * sls_config.lambda_rem_u
-        weight_x = weight_x[:, None]   # [T, 1]
-        weight_u = weight_u[:, None]   # [T, 1]
-        q = q + weight_x * grad_X_rem
-        r = r + weight_u * grad_U_rem
+        weight = sls_config.lambda_rem * decay
+        q = q + weight * grad_X_rem
+        r = r + weight * grad_U_rem
 
     A_pad, B_pad = dynamics_linearizer(X, pad(U), jnp.arange(T + 1))
     A = A_pad[:-1]
@@ -340,7 +337,7 @@ def sqp(
 
             feas_ok = feas <= sqp_config.feas_tol
             step_ok = step <= sqp_config.step_tol * (1.0 + z_norm)
-            # jax.debug.print("SQP Iteration {} Feas {} (<= {}) Step {} (<= {})", i, feas, sqp_config.feas_tol, step, sqp_config.step_tol)
+            jax.debug.print("SQP Iteration {} Feas {} (<= {}) Step {} (<= {})", i, feas, sqp_config.feas_tol, step, sqp_config.step_tol)
             converged1 = jnp.logical_and(feas_ok, step_ok)
             X_next = lax.select(converged1, X_curr, X_curr + dX)
             U_next = lax.select(converged1, U_curr, U_curr + dU)

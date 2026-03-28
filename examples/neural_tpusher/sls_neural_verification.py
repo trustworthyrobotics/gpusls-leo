@@ -178,6 +178,7 @@ def main(config: DictConfig):
     data_config = config["data"]
     planning_config = config["planning"]
     seed = config["settings"]["seed"]
+    seed = 42
 
     dt_dyn_dir = config["test_models"]["dt_dyn_dir"]
     dt_dyn = load_t_pushing_dt_dyn(dt_dyn_dir)
@@ -259,9 +260,8 @@ def main(config: DictConfig):
         warm_start=False,
         rti=False,
         enable_linearization_bounds=True,
-        enable_linearization_gradients=True,
-        lambda_rem_x=jnp.array([10.0, 10.0, 0.1, 100.0, 100.0]),
-        lambda_rem_u=jnp.array([0.1, 0.1])
+        enable_linearization_gradients=False,
+        lambda_rem=4.0
     )
 
     sqp_cfg = SQPConfig(
