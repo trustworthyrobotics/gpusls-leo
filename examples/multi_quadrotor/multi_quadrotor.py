@@ -399,7 +399,7 @@ def main():
     # State limits
     # -----------------------------
     x_max_single = jnp.array([
-        15.0, 15.0, 15.0,
+        5.0, 5.0, 5.0,
         jnp.pi / 2.0,
         jnp.pi / 2.0,
         10.0 * jnp.pi,
@@ -417,8 +417,8 @@ def main():
     # One circular obstacle per quad in XY projection, repeated in constraints interface.
     # -----------------------------
     obstacles = jnp.array([
-        [0.0, 0.4, 0.35],
-        [0.5, -0.5, 0.05],
+        [0.0, 0.3, 0.35],
+        [0.4, -0.5, 0.3],
     ], dtype=jnp.float64)
 
 
@@ -468,18 +468,18 @@ def main():
     # -----------------------------
     admm_cfg = ADMMConfig(
         eps_abs=1e-1,
-        eps_rel=1e-2,
-        rho_max=1e4,
+        eps_rel=1e-4,
+        rho_max=5e1,
         max_iterations=400,
-        rho_update_frequency=20,
-        initial_rho=30.0,
+        rho_update_frequency=2,
+        initial_rho=1.0,
     )
 
     sls_cfg = SLSConfig(
         max_sls_iterations=3,
         sls_primal_tol=1e-2,
         enable_fastsls=True,
-        initialize_nominal=False,
+        initialize_nominal=True,
         max_initial_sqp_iterations=30,
         warm_start=False,
         rti=False,
