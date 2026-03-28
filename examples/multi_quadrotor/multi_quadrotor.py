@@ -21,7 +21,7 @@ from gpu_sls.utils.constraint_utils import (
     make_constant_disturbance,
 )
 from gpu_sls.utils.sls_visual import get_trajectory_tubes
-from visualize_experiment import plot_plan_xy_with_tubes
+from visualize_experiment import plot_plan_xy_with_tubes, plot_tube_graph_multiquadrotor
 # from visualize_experiment import plot_rollouts_tubes_centers, plot_tube_graph_quadrotor
 
 config.update("jax_enable_x64", False)
@@ -250,19 +250,56 @@ def make_w(
     dtype = x.dtype
 
     key, subkey = jax.random.split(key)
-    w_random = jax.random.uniform(subkey, (n,), dtype=dtype, minval=-1.0, maxval=1.0)
 
-    # For large N, do not build 2^N adversarial corners.
-    # Use +/- basis only.
-    eye_n = jnp.eye(n, dtype=dtype)
-    adv_table = jnp.concatenate([eye_n, -eye_n], axis=0)
+    # Random corner of {-1, +1}^n
+    w = jax.random.rademacher(subkey, (n,), dtype=dtype)
 
-    adv_idx = jnp.clip(rollout_idx - NUM_RANDOM, 0, adv_table.shape[0] - 1)
-    w_adv = adv_table[adv_idx]
-
-    w = jnp.where(rollout_idx >= NUM_RANDOM, w_adv, w_random)
     return key, w
 
+
+# def run_single_rollout(
+#     rollout_idx: int,
+#     x0: jnp.ndarray,
+#     X_pred: jnp.ndarray,
+#     U_pred: jnp.ndarray,
+#     Phi_u: jnp.ndarray,
+#     E_sim: jnp.ndarray,
+#     dt: float,
+#     u_min: jnp.ndarray,
+#     u_max: jnp.ndarray,
+#     key: jax.Array,
+# ) -> tuple[jnp.ndarray, jnp.ndarray]:
+#     T_steps = U_pred.shape[0]
+#     n = x0.shape[0]
+
+#     def step_fn(carry, k):
+#         x, key, disturbance_history = carry
+
+#         feedback_all = jnp.einsum("jab,jb->ja", Phi_u[k], disturbance_history)
+#         mask = (jnp.arange(T_steps + 1) <= (k + 1))[:, None]
+#         disturbance_feedback = jnp.sum(feedback_all * mask, axis=0)
+
+#         u = U_pred[k] + disturbance_feedback
+#         u = jnp.clip(u, u_min, u_max)
+
+#         x_nom = multi_quad_dynamics(x, u, 0, parameter=dt)
+#         key, w = make_w(rollout_idx, x, key)
+#         x_next = x_nom + E_sim @ w
+
+#         err = jnp.abs(X_pred[k + 1] - x_next)
+
+#         disturbance_history = disturbance_history.at[k + 1].set(E_sim @ w)
+
+#         carry = (x_next, key, disturbance_history)
+#         return carry, (x_next, err)
+
+#     init_disturbance_history = jnp.zeros((T_steps + 1, n), dtype=x0.dtype)
+#     init_carry = (x0, key, init_disturbance_history)
+
+#     ks = jnp.arange(T_steps)
+#     _final_carry, (xs, disturbed) = jax.lax.scan(step_fn, init_carry, ks)
+
+#     return xs, disturbed
 
 def run_single_rollout(
     rollout_idx: int,
@@ -279,8 +316,13 @@ def run_single_rollout(
     T_steps = U_pred.shape[0]
     n = x0.shape[0]
 
+    # Sample one disturbance direction for the entire rollout
+    key, subkey = jax.random.split(key)
+    w_fixed = jax.random.rademacher(subkey, (n,), dtype=x0.dtype)
+    d_fixed = E_sim @ w_fixed
+
     def step_fn(carry, k):
-        x, key, disturbance_history = carry
+        x, disturbance_history = carry
 
         feedback_all = jnp.einsum("jab,jb->ja", Phi_u[k], disturbance_history)
         mask = (jnp.arange(T_steps + 1) <= (k + 1))[:, None]
@@ -290,18 +332,17 @@ def run_single_rollout(
         u = jnp.clip(u, u_min, u_max)
 
         x_nom = multi_quad_dynamics(x, u, 0, parameter=dt)
-        key, w = make_w(rollout_idx, x, key)
-        x_next = x_nom + E_sim @ w
+        x_next = x_nom + d_fixed
 
         err = jnp.abs(X_pred[k + 1] - x_next)
 
-        disturbance_history = disturbance_history.at[k + 1].set(E_sim @ w)
+        disturbance_history = disturbance_history.at[k + 1].set(d_fixed)
 
-        carry = (x_next, key, disturbance_history)
+        carry = (x_next, disturbance_history)
         return carry, (x_next, err)
 
     init_disturbance_history = jnp.zeros((T_steps + 1, n), dtype=x0.dtype)
-    init_carry = (x0, key, init_disturbance_history)
+    init_carry = (x0, init_disturbance_history)
 
     ks = jnp.arange(T_steps)
     _final_carry, (xs, disturbed) = jax.lax.scan(step_fn, init_carry, ks)
@@ -418,7 +459,7 @@ def main():
     # -----------------------------
     obstacles = jnp.array([
         [0.0, 0.3, 0.35],
-        [0.4, -0.5, 0.3],
+        [0.5, -0.5, 0.3],
     ], dtype=jnp.float64)
 
 
@@ -496,16 +537,24 @@ def main():
         line_search=False,
     )
 
-    # Q_single = jnp.diag(jnp.array(W_single[:-4]))
-    # R_single = jnp.diag(jnp.array(W_single[-4:]))
+    Q_term_single = jnp.diag(jnp.array([
+        30.0, 30.0, 1.0,   # position
+        1.0, 1.0, 1.0,     # roll, pitch, yaw
+        1.0, 1.0, 1.0,     # velocities
+        1.0, 1.0, 1.0
+    ]))
+
     Q_single = jnp.eye(12)
     R_single = jnp.eye(4)
 
     Q = jax.scipy.linalg.block_diag(*([Q_single] * N_QUADS))
+    Q_term = jax.scipy.linalg.block_diag(*([Q_term_single] * N_QUADS))
     R = jax.scipy.linalg.block_diag(*([R_single] * N_QUADS))
 
-    Q_bar = jnp.broadcast_to(Q, (H + 1, N, N))
-    R_bar = jnp.broadcast_to(R, (H, NU, NU))
+    Q_bar = jnp.broadcast_to(Q, (H + 1, Q.shape[0], Q.shape[1]))
+    Q_bar = Q_bar.at[-5:].set(Q_term)
+
+    R_bar = jnp.broadcast_to(R, (H, R.shape[0], R.shape[1]))
     no_obstacles = jnp.zeros((0, 3), dtype=jnp.float64)
     controller = GenericMPC(
         sls_cfg,
@@ -528,10 +577,49 @@ def main():
     # -----------------------------
     # Robust plan
     # -----------------------------
-    N_ROLLOUTS = NUM_RANDOM + 2 * N
+    N_ROLLOUTS = 3000
     u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, E_prev = controller.run(
         x0=x0, reference=reference, parameter=parameter
     )
+    # plot_plan_xy_with_tubes(
+    #     X_pred=X_pred,
+    #     x0_quads=x0_quads,
+    #     xg_quads=xg_quads,
+    #     obstacles=obstacles,
+    #     Phi_x=Phi_x,
+    #     E_prev=E_prev,
+    #     N_QUADS=N_QUADS,
+    #     SINGLE_N=SINGLE_N,
+    #     filename="multi_quadrotor_plan_tubes.png",
+    #     stride=1,        # plot every 5 timesteps (recommended)
+    #     box_alpha=0.15,  # transparency of squares
+    # )
+    # # -----------------------------
+    # Parallel rollouts
+    # -----------------------------
+    keys = jax.random.split(key, N_ROLLOUTS)
+    rollout_indices = jnp.arange(N_ROLLOUTS)
+
+    run_vmapped = jax.vmap(
+        run_single_rollout,
+        in_axes=(0, None, None, None, None, None, None, None, None, 0),
+    )
+
+    xs_jax, disturbed_jax = run_vmapped(
+        rollout_indices,
+        x0,
+        X_pred,
+        U_pred,
+        Phi_u,
+        E_sim,
+        dt,
+        u_min,
+        u_max,
+        keys,
+    )
+
+    xs = np.asarray(xs_jax)
+    disturbed = np.asarray(disturbed_jax)
     plot_plan_xy_with_tubes(
         X_pred=X_pred,
         x0_quads=x0_quads,
@@ -541,37 +629,23 @@ def main():
         E_prev=E_prev,
         N_QUADS=N_QUADS,
         SINGLE_N=SINGLE_N,
-        filename="multi_quadrotor_plan_tubes.png",
-        stride=1,        # plot every 5 timesteps (recommended)
-        box_alpha=0.15,  # transparency of squares
+        xs=xs,
+        filename="multi_quadrotor_plan_tubes_rollouts.png",
+        stride=1,
+        box_alpha=0.15,
+        rollout_alpha=0.6,
+        rollout_linewidth=1.0,
     )
-    # -----------------------------
-    # Parallel rollouts
-    # -----------------------------
-    # keys = jax.random.split(key, N_ROLLOUTS)
-    # rollout_indices = jnp.arange(N_ROLLOUTS)
+    tube = get_trajectory_tubes(Phi_x, E_prev)
 
-    # run_vmapped = jax.vmap(
-    #     run_single_rollout,
-    #     in_axes=(0, None, None, None, None, None, None, None, None, 0),
-    # )
-
-    # xs_jax, disturbed_jax = run_vmapped(
-    #     rollout_indices,
-    #     x0,
-    #     X_pred,
-    #     U_pred,
-    #     Phi_u,
-    #     E_sim,
-    #     dt,
-    #     u_min,
-    #     u_max,
-    #     keys,
-    # )
-
-    # xs = np.asarray(xs_jax)
-    # disturbed = np.asarray(disturbed_jax)
-
+    plot_tube_graph_multiquadrotor(
+        disturbed=disturbed,
+        tube=tube,
+        dt=dt,
+        N_QUADS=N_QUADS,
+        SINGLE_N=SINGLE_N,
+        filename="multi_quadrotor_disturbance_vs_tube_size.png",
+    )
     # # -----------------------------
     # # Visualize first quad only in XY
     # # -----------------------------
