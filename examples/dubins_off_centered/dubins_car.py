@@ -371,7 +371,8 @@ def main():
 
             key, x, w = dubins_step_with_disturbance(key, x, u, E_sim, dt, i)
 
-            disturbed[i, k] = np.asarray(x - X_pred[k + 1])
+            # disturbed[i, k] = np.asarray(x - X_pred[k + 1])
+            disturbed[i, k] = np.asarray(x)
 
             disturbance_history.append(E_sim @ w)
 
@@ -396,8 +397,8 @@ def main():
     lower = plan + shift - tube                                 # (N+1, n)
     upper = plan + shift + tube                                 # (N+1, n)
 
-    lower_real = shift - tube
-    upper_real = shift + tube
+    # lower_real = shift - tube
+    # upper_real = shift + tube
 
     # tube center for plotting
     plan_center = plan                                   # (N+1, n)
@@ -425,8 +426,8 @@ def main():
 
     plot_tube_graph(
         disturbed=disturbed,
-        lower=lower_real,
-        upper=upper_real,
+        lower=lower,
+        upper=upper,
         dt=dt,
     )
 

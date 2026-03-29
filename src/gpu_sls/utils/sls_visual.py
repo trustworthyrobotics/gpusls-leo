@@ -17,7 +17,8 @@ def get_trajectory_tubes(Phi_x, E_prev):
 
 def plot_tube_graph(
     disturbed,
-    tube,
+    lower,
+    upper,
     dt,
     output_folder,
     filename: str = "disturbance_vs_tube_size.png",
@@ -30,7 +31,8 @@ def plot_tube_graph(
     """
 
     disturbed = np.asarray(disturbed)
-    tube = np.asarray(tube)
+    lower = np.asarray(lower)
+    upper = np.asarray(upper)
 
     if disturbed.ndim != 3:
         raise ValueError(
@@ -39,16 +41,8 @@ def plot_tube_graph(
 
     n_rollouts, T, n_states = disturbed.shape
 
-    if tube.ndim != 2 or tube.shape[1] != n_states:
-        raise ValueError(
-            f"tube has shape {tube.shape}. Expected (T+1, {n_states})."
-        )
-
-    tube_trim = tube[1:, :]
-    if tube_trim.shape[0] != T:
-        raise ValueError(
-            f"tube[1:] has length {tube_trim.shape[0]}, but disturbed time dimension is {T}."
-        )
+    tube_trim_lower = lower[1:, :]
+    tube_trim_upper = upper[1:, :]
 
     # time axis
     t = np.arange(T) * dt
@@ -63,11 +57,13 @@ def plot_tube_graph(
         axes = [axes]
 
     for idx, ax in enumerate(axes):
-        tube_i = tube_trim[:, idx]
+        tube_i_lower = tube_trim_lower[:, idx]
+        tube_i_upper = tube_trim_upper[:, idx]
         dev_all = disturbed[:, :, idx]
 
         # tube
-        ax.plot(t, tube_i, linewidth=3, label="tube size")
+        ax.plot(t, tube_i_lower, linewidth=3, label="tube size", color="tab:blue")
+        ax.plot(t, tube_i_upper, linewidth=3, label="tube size", color="tab:blue")
 
         # rollouts
         for r_idx, dev in enumerate(dev_all):

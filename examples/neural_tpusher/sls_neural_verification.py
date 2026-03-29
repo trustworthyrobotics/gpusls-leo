@@ -260,7 +260,7 @@ def main(config: DictConfig):
         warm_start=False,
         rti=False,
         enable_linearization_bounds=True,
-        enable_linearization_gradients=False,
+        enable_linearization_gradients=True,
         lambda_rem=4.0
     )
 
@@ -398,7 +398,7 @@ def main(config: DictConfig):
 
     reference = X_ref
 
-    u0, X_pred, U_pred, V, backoffs, Phi_x, Phi_u, EN = controller.run(
+    u0, X_pred, U_pred, V, backoffs, Phi_x, Phi_u, EN, r_centerN = controller.run(
         x0=z_cur,
         reference=reference,
         parameter=dt,
@@ -428,7 +428,7 @@ def main(config: DictConfig):
             )
             jax.debug.print("Current state: {}", x)
 
-            err = np.abs(np.asarray(X_pred[k + 1] - x))
+            err = np.abs(np.asarray(x))
 
             disturbed[i, k, :] = err
             disturbance_history.append(E_sim @ w)
@@ -441,6 +441,10 @@ def main(config: DictConfig):
         pusher_pos=init_pusher_pos,
     )
 
+    jax.debug.print(
+        "nonzero values: {}",
+        r_centerN[r_centerN != 0]
+    )
 
     visualize_x_sequence(
         env,
@@ -451,12 +455,15 @@ def main(config: DictConfig):
     )
 
     tube = get_trajectory_tubes(Phi_x, EN)
-    lower = X_pred - tube
-    upper = X_pred + tube
+    tube_center_shift = jnp.einsum("kjxn,jn->kx", Phi_x, r_centerN)
+    shift = np.asarray(tube_center_shift)    
+    lower = X_pred - tube + shift
+    upper = X_pred + tube + shift
 
     plot_tube_graph(
         disturbed,
-        tube,
+        lower,
+        upper,
         dt,
         output_folder=os.getcwd(),
         filename="disturbance_vs_tube_size.png",

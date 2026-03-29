@@ -231,7 +231,8 @@ def plot_rollouts_tubes_centers(
 
 def plot_tube_graph_quadrotor(
     disturbed,
-    tube,
+    lower_real,
+    upper_real,
     dt,
     filename: str = "disturbance_vs_tube_size_quadrotor_3d.png",
     state_labels: list | None = None,
@@ -243,17 +244,12 @@ def plot_tube_graph_quadrotor(
     tube:      (T+1, n_states)
     """
     disturbed = np.asarray(disturbed)
-    tube = np.asarray(tube)
 
     n_states = disturbed.shape[2]
 
     if disturbed.ndim != 3:
         raise ValueError(
             f"disturbed has shape {disturbed.shape}. Expected (n_rollouts, T, n_states)."
-        )
-    if tube.ndim != 2 or tube.shape[1] != n_states:
-        raise ValueError(
-            f"tube has shape {tube.shape}. Expected (T+1, {n_states})."
         )
 
     default_labels_6 = [
@@ -276,11 +272,8 @@ def plot_tube_graph_quadrotor(
             state_labels = [(f"x{i}", "units") for i in range(n_states)]
 
     T = disturbed.shape[1]
-    tube_trim = tube[1:, :]
-    if tube_trim.shape[0] != T:
-        raise ValueError(
-            f"tube[1:] has length {tube_trim.shape[0]}, but disturbed time dimension is {T}."
-        )
+    tube_trim_lower = lower_real[1:, :]
+    tube_trim_upper = upper_real[1:, :]
 
     t = np.arange(T) * dt
 
@@ -289,10 +282,12 @@ def plot_tube_graph_quadrotor(
         axes = [axes]
 
     for idx, ax in enumerate(axes):
-        tube_i = tube_trim[:, idx]
+        tube_i_lower = tube_trim_lower[:, idx]
+        tube_i_upper = tube_trim_upper[:, idx]
         dev_all = disturbed[:, :, idx]
 
-        ax.plot(t, tube_i, label=f"tube size ({state_labels[idx][0]})", linewidth=3)
+        ax.plot(t, tube_i_lower, label=f"tube size ({state_labels[idx][0]})", linewidth=3)
+        ax.plot(t, tube_i_upper, label=f"tube size ({state_labels[idx][0]})", linewidth=3)
 
         for r_idx, dev in enumerate(dev_all):
             m = np.isfinite(dev)

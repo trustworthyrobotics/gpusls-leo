@@ -18,7 +18,7 @@ from gpu_sls.utils.constraint_utils import combine_constraints, make_control_box
 from gpu_sls.utils.sls_visual import get_trajectory_tubes
 from visualize_experiment import plot_rollouts_tubes_centers, plot_tube_graph_quadrotor
 
-config.update("jax_enable_x64", True)
+config.update("jax_enable_x64", False)
 config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 config.update("jax_persistent_cache_min_compile_time_secs", 0)
 config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -255,7 +255,7 @@ def run_single_rollout(
         x_next = x_nom + E_sim @ w
 
         # Tracking error vs nominal plan
-        err = jnp.abs(X_pred[k + 1] - x_next)
+        err = x_next
 
         # Append new disturbance to history
         disturbance_history = disturbance_history.at[k + 1].set(E_sim @ w)
@@ -390,7 +390,7 @@ def main():
         warm_start=False,
         rti=False,
         enable_linearization_bounds=True,
-        enable_linearization_gradients=True,
+        enable_linearization_gradients=False,
         lambda_rem=2.0,
     )
 
@@ -430,7 +430,7 @@ def main():
     # Robust plan
     # -----------------------------
     N_ROLLOUTS = NUM_RANDOM + NUM_ADV
-    u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, E_prev = controller.run(
+    u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, E_prev, r_centerN = controller.run(
         x0=x0, reference=reference, parameter=parameter
     )
 
@@ -472,10 +472,16 @@ def main():
     uppers_xy = []
 
     tube = get_trajectory_tubes(Phi_x, E_prev)
+    tube_center_shift = jnp.einsum("kjxn,jn->kx", Phi_x, r_centerN)
+    shift = np.asarray(tube_center_shift)      
 
     plan_xy = X_pred[:, :2]       # (px, py)
-    lower = plan_xy - tube[:, :2]
-    upper = plan_xy + tube[:, :2]
+    lower = plan_xy - tube[:, :2] + shift[:, :2]
+    upper = plan_xy + tube[:, :2] + shift[:, :2]
+
+    lower_real = X_pred + shift - tube
+    upper_real = X_pred + shift + tube
+
 
     plans_xy.append(plan_xy)
     lowers_xy.append(lower)
@@ -502,7 +508,8 @@ def main():
 
     plot_tube_graph_quadrotor(
         disturbed=disturbed[:, :, :12],   # position + Euler angles only
-        tube=tube[:, :12],
+        lower_real=lower_real,
+        upper_real=upper_real,
         dt=dt,
         filename="quadrotor_3d_disturbance_vs_tube_size_pose.png",
     )
