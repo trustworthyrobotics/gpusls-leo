@@ -63,6 +63,7 @@ class GenericMPC:
         self.Phi_x_ws = jnp.zeros((config.N + 1, config.N + 1, config.n, config.n))
         self.Phi_u_ws = jnp.zeros((config.N, config.N + 1, config.nu, config.n))
         self.E_prev = jnp.zeros((config.N + 1, config.n, 2 * config.n))
+        self.r_center_prev = jnp.zeros((config.N + 1, config.n))
 
         self.U0 = U_in
         self.X0 = X_in
@@ -110,16 +111,17 @@ class GenericMPC:
         self._solve = jax.jit(work)
 
     def run(self, x0: jnp.ndarray, reference: jnp.ndarray, parameter: Any):
-        X, U, V, w, y, rho, backoffs, Phi_x, Phi_u, betaN, muN, EN = self._solve(
+        X, U, V, w, y, rho, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN = self._solve(
             reference,
             parameter,
             self.config.W,
             x0, self.X0, self.U0, self.V0,
             self.w, self.y, self.rho,
             self.obstacles,
-            self.h_ct_ws, self.beta_ws, self.mu_ws, self.Phi_x_ws, self.Phi_u_ws, self.E_prev
+            self.h_ct_ws, self.beta_ws, self.mu_ws, self.Phi_x_ws, self.Phi_u_ws, self.E_prev, self.r_center_prev
         )
         self.E_prev = EN
+        self.r_center_prev = r_centerN
         s = self.shift
 
         invalid = (
@@ -235,4 +237,4 @@ class GenericMPC:
             operand=None,
         )
 
-        return U[0], X, U, V, backoffs, Phi_x, Phi_u, self.E_prev
+        return U[0], X, U, V, backoffs, Phi_x, Phi_u, self.E_prev, self.r_center_prev

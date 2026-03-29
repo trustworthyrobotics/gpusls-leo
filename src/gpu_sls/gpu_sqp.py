@@ -157,13 +157,16 @@ def merit_function_factory(rho_merit, lambda_rem, remainder_func, eps_rem):
 @partial(jax.jit, static_argnames=("remainder_func",))
 def remainder_penalty(X_, U_, eps_, remainder_func):
     T = U_.shape[0]
-    t = jnp.arange(T + 1)[:, None]
+    t = jnp.arange(T + 1, dtype=X_.dtype)[:, None]
     U_pad_ = jnp.pad(U_, ((0, 1), (0, 0)))
     z_nom_ = jnp.concatenate([X_, U_pad_, t], axis=1)
     z_lo_ = z_nom_ - eps_
     z_up_ = z_nom_ + eps_
-    r_bound_ = jax.vmap(remainder_func, in_axes=(0,0))(z_lo_, z_up_)
-    return jnp.sum(r_bound_)
+
+    x_lower, x_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo_, z_up_)
+
+    x_radius = 0.5 * (x_upper - x_lower)
+    return jnp.sum(x_radius)
 
 
 @partial(jax.jit, static_argnames=("remainder_func",))
@@ -196,7 +199,7 @@ def compute_search_direction(
     x0, X, U, V, c,
     w, y, rho,
     Q_bar, R_bar,
-    h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev, Phi_x_prev, Phi_u_prev,
+    h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev, r_center_prev, Phi_x_prev, Phi_u_prev,
 ):
     T = U.shape[0]
     nx = X.shape[1]
@@ -253,26 +256,27 @@ def compute_search_direction(
         betaN   = jnp.ones((T + 1, T + 1, nc - n_obs)) * 1e-10
         muN     = jnp.zeros((T + 1, nc))
         EN = jnp.zeros((T + 1, nx, nx + nx))
-        return dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN
+        r_centerN = jnp.zeros((T + 1, nx))
+        return dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN
 
     def run_sls(_):
-        dX, dU, dV, w1, y1, rho1, converged, converged_admm, backoffs, Phi_x, Phi_u, betaN, muN, EN = sls_solve_gpu(
+        dX, dU, dV, w1, y1, rho1, converged, converged_admm, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN = sls_solve_gpu(
             admm_config, remainder_func,
             Q, q, R, r, M, A, B, c,
             C_all, D_all, f_all, w, y, rho, sls_config, splits_cfg,
-            E, E_prev, Q_bar, R_bar, obstacles, X, h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, X, U
+            E, E_prev, r_center_prev, Q_bar, R_bar, obstacles, X, h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, X, U
         )
-        return dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN
+        return dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN
 
     use_nominal = jnp.logical_or(
         jnp.logical_not(sls_config.enable_fastsls),
         jnp.logical_and(sls_config.initialize_nominal, sqp_iteration < sls_config.max_initial_sqp_iterations)
     )
-    dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN = lax.cond(
+    dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN = lax.cond(
         use_nominal, run_nominal, run_sls, operand=None
     )
 
-    return dX, dU, dV, q, r, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN
+    return dX, dU, dV, q, r, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN
 
 
 @partial(jit, static_argnums=(0,1,2,3,4,5,6,7,8,9))
@@ -287,7 +291,7 @@ def sqp(
     x0, X_in, U_in, V_in,
     w, y, rho,
     obstacles,
-    h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev,
+    h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev, r_center_prev
 ):
     _cost = partial(cost, W, reference)
     if hessian_approx is not None:
@@ -299,7 +303,7 @@ def sqp(
     model_evaluator = partial(model_evaluator_helper, _cost, _dynamics, x0)
 
     def body(i, carry):
-        i, X_curr, U_curr, V_curr, w, y, rho, converged, backoffs, Phi_x, Phi_u, beta_ws, mu_w, E_prev = carry
+        i, X_curr, U_curr, V_curr, w, y, rho, converged, backoffs, Phi_x, Phi_u, beta_ws, mu_w, E_prev, r_center_prev = carry
 
         def do_nothing(_):
             return carry
@@ -313,7 +317,7 @@ def sqp(
             y0   = lax.select(warm_flag, y, jnp.zeros_like(y))
             rho0 = lax.select(warm_flag, rho, jnp.asarray(admm_config.initial_rho, dtype=rho.dtype))
             h_ct_ws = backoffs
-            dX, dU, dV, q, r, w1, y1, rho1, backoffs1, Phi_x1, Phi_u1, betaN, muN, EN = compute_search_direction(
+            dX, dU, dV, q, r, w1, y1, rho1, backoffs1, Phi_x1, Phi_u1, betaN, muN, EN, r_centerN = compute_search_direction(
                 sqp_config, sls_config, admm_config,
                 _cost, _dynamics, _hessian_approx,
                 constraints, disturbance,
@@ -323,7 +327,7 @@ def sqp(
                 x0, X_curr, U_curr, V_curr, c,
                 w0, y0, rho0,
                 Q_bar, R_bar,
-                h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev, Phi_x, Phi_u
+                h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, E_prev, r_center_prev, Phi_x, Phi_u
             )
 
             step = jnp.maximum(
@@ -404,13 +408,13 @@ def sqp(
 
             return (i + 1, X_next, U_next, V_next, w_next, y_next, rho_next,
                     jnp.logical_or(converged, converged1),
-                    backoffs_next, Phi_x_next, Phi_u_next, betaN, muN, EN)
+                    backoffs_next, Phi_x_next, Phi_u_next, betaN, muN, EN, r_centerN)
 
         return lax.cond(converged, do_nothing, do_iter, operand=None)
 
     backoffs0 = h_ct_ws
-    carry0 = (0, X_in, U_in, V_in, w, y, rho, jnp.array(False), backoffs0, Phi_x_ws, Phi_u_ws, beta_ws, mu_ws, E_prev)
-    total_iterations, X_out, U_out, V_out, w_out, y_out, rho_out, converged, backoffs, Phi_x, Phi_u, betaN, muN, EN = lax.fori_loop(
+    carry0 = (0, X_in, U_in, V_in, w, y, rho, jnp.array(False), backoffs0, Phi_x_ws, Phi_u_ws, beta_ws, mu_ws, E_prev, r_center_prev)
+    total_iterations, X_out, U_out, V_out, w_out, y_out, rho_out, converged, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN = lax.fori_loop(
         0, sqp_config.max_sqp_iterations + sls_config.max_initial_sqp_iterations, body, carry0
     )
-    return X_out, U_out, V_out, w_out, y_out, rho_out, backoffs, Phi_x, Phi_u, betaN, muN, EN
+    return X_out, U_out, V_out, w_out, y_out, rho_out, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN

@@ -334,7 +334,7 @@ def run_single_rollout(
         x_nom = multi_quad_dynamics(x, u, 0, parameter=dt)
         x_next = x_nom + d_fixed
 
-        err = jnp.abs(X_pred[k + 1] - x_next)
+        err = x_next
 
         disturbance_history = disturbance_history.at[k + 1].set(d_fixed)
 
@@ -578,9 +578,16 @@ def main():
     # Robust plan
     # -----------------------------
     N_ROLLOUTS = 3000
-    u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, E_prev = controller.run(
+    u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, E_prev, r_centerN = controller.run(
         x0=x0, reference=reference, parameter=parameter
     )
+
+    # jax.debug.print("{}", r_centerN)
+    jax.debug.print(
+        "nonzero values: {}",
+        r_centerN[r_centerN != 0]
+    )
+
     # plot_plan_xy_with_tubes(
     #     X_pred=X_pred,
     #     x0_quads=x0_quads,
@@ -626,6 +633,7 @@ def main():
         xg_quads=xg_quads,
         obstacles=obstacles,
         Phi_x=Phi_x,
+        r_centerN=r_centerN,
         E_prev=E_prev,
         N_QUADS=N_QUADS,
         SINGLE_N=SINGLE_N,
@@ -640,6 +648,9 @@ def main():
 
     plot_tube_graph_multiquadrotor(
         disturbed=disturbed,
+        X_pred=X_pred,
+        Phi_x=Phi_x,
+        r_centerN=r_centerN,
         tube=tube,
         dt=dt,
         N_QUADS=N_QUADS,

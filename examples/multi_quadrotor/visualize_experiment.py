@@ -17,6 +17,7 @@ def plot_plan_xy_with_tubes(
     obstacles,
     Phi_x,
     E_prev,
+    r_centerN,
     N_QUADS,
     SINGLE_N,
     xs=None,                  # (n_rollouts, T, N) or None
@@ -109,8 +110,16 @@ def plot_plan_xy_with_tubes(
     fig.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close(fig)
 
+import numpy as np
+import matplotlib.pyplot as plt
+import jax.numpy as jnp
+
+
 def plot_tube_graph_multiquadrotor(
     disturbed,
+    X_pred,
+    Phi_x,
+    r_centerN,
     tube,
     dt,
     N_QUADS,
@@ -119,14 +128,17 @@ def plot_tube_graph_multiquadrotor(
     state_labels: list | None = None,
 ):
     """
-    Plot deviation vs tube size for a multi-quadrotor state.
+    Plot actual rollout states against the off-centered tube bounds for a
+    multi-quadrotor system.
 
-    disturbed: (n_rollouts, T, N_QUADS * SINGLE_N)
-    tube:      (T+1, N_QUADS * SINGLE_N)
-
-    Produces one subplot per state dimension per quad.
+    disturbed:  (n_rollouts, T,   N_QUADS * SINGLE_N)   actual rollout states
+    X_pred:     (T+1,       N_QUADS * SINGLE_N)         nominal plan
+    Phi_x:      (T+1, T+1,  N_QUADS * SINGLE_N, nw)
+    r_centerN:  (T+1, nw)                               propagated disturbance center
+    tube:       (T+1,       N_QUADS * SINGLE_N)         symmetric half-widths
     """
     disturbed = np.asarray(disturbed)
+    X_pred = np.asarray(X_pred)
     tube = np.asarray(tube)
 
     if disturbed.ndim != 3:
@@ -143,15 +155,14 @@ def plot_tube_graph_multiquadrotor(
             f"N_QUADS * SINGLE_N = {N_QUADS} * {SINGLE_N} = {expected_n}."
         )
 
-    if tube.ndim != 2 or tube.shape[1] != n_states:
+    if X_pred.ndim != 2 or X_pred.shape != (T + 1, n_states):
         raise ValueError(
-            f"tube has shape {tube.shape}. Expected (T+1, {n_states})."
+            f"X_pred has shape {X_pred.shape}. Expected ({T + 1}, {n_states})."
         )
 
-    tube_trim = tube[1:, :]
-    if tube_trim.shape[0] != T:
+    if tube.ndim != 2 or tube.shape != (T + 1, n_states):
         raise ValueError(
-            f"tube[1:] has length {tube_trim.shape[0]}, but disturbed time dimension is {T}."
+            f"tube has shape {tube.shape}. Expected ({T + 1}, {n_states})."
         )
 
     default_labels_12 = [
@@ -180,12 +191,30 @@ def plot_tube_graph_multiquadrotor(
             f"state_labels must have length SINGLE_N={SINGLE_N}, got {len(state_labels)}."
         )
 
+    # Off-centered tube center shift: [T+1, n_states]
+    tube_center_shift = np.asarray(
+        jnp.einsum("kjxn,jn->kx", Phi_x, r_centerN)
+    )
+
+    # Tube center and bounds in absolute state coordinates
+    tube_center = X_pred + tube_center_shift
+    lower = tube_center - tube
+    upper = tube_center + tube
+
+    # Rollouts are length T, so trim the T+1 trajectories/bounds to match
+    nominal_trim = X_pred[1:, :]
+    center_trim = tube_center[1:, :]
+    lower_trim = lower[1:, :]
+    upper_trim = upper[1:, :]
+    tube_trim = tube[1:, :]
+
     t = np.arange(T) * dt
 
     nrows = N_QUADS * SINGLE_N
     fig, axes = plt.subplots(
-        nrows, 1,
-        figsize=(12, 2.2 * nrows + 2),
+        nrows,
+        1,
+        figsize=(12, 2.4 * nrows + 2),
         sharex=True,
     )
 
@@ -200,27 +229,69 @@ def plot_tube_graph_multiquadrotor(
             ax = axes[idx]
 
             state_name, state_unit = state_labels[j]
-            tube_i = tube_trim[:, idx]
-            dev_all = disturbed[:, :, idx]
 
+            nominal_i = nominal_trim[:, idx]
+            center_i = center_trim[:, idx]
+            lower_i = lower_trim[:, idx]
+            upper_i = upper_trim[:, idx]
+            tube_i = tube_trim[:, idx]
+            rollout_all = disturbed[:, :, idx]
+
+            # nominal trajectory
             ax.plot(
                 t,
-                tube_i,
-                linewidth=3,
-                label=f"tube size ({state_name}, quad {q})",
+                nominal_i,
+                linestyle="--",
+                linewidth=2,
+                label=f"nominal ({state_name}, quad {q})",
             )
 
-            for r_idx, dev in enumerate(dev_all):
-                m = np.isfinite(dev)
+            # shifted tube center
+            ax.plot(
+                t,
+                center_i,
+                linewidth=2,
+                label=f"tube center ({state_name}, quad {q})",
+            )
+
+            # off-centered tube bounds
+            ax.plot(
+                t,
+                lower_i,
+                linewidth=2,
+                label=f"lower bound ({state_name}, quad {q})",
+            )
+            ax.plot(
+                t,
+                upper_i,
+                linewidth=2,
+                label=f"upper bound ({state_name}, quad {q})",
+            )
+
+            # fill between bounds
+            ax.fill_between(
+                t,
+                lower_i,
+                upper_i,
+                alpha=0.2,
+            )
+
+            # optional symmetric tube size around shifted center, for reference
+            # this is just the half-width, not an absolute state trajectory
+            # ax.plot(t, tube_i, linewidth=2, label=f"tube half-width ({state_name}, quad {q})")
+
+            # rollout trajectories
+            for r_idx, rollout in enumerate(rollout_all):
+                m = np.isfinite(rollout)
                 ax.plot(
                     t[m],
-                    dev[m],
+                    rollout[m],
                     alpha=0.5,
-                    label=f"|{state_name} - nominal| (rollouts)" if r_idx == 0 else None,
+                    label=f"rollouts ({state_name})" if r_idx == 0 else None,
                 )
 
             ax.set_ylabel(state_unit)
-            ax.set_title(f"Quad {q} — {state_name}: Deviation vs Tube Size")
+            ax.set_title(f"Quad {q} — {state_name}: Off-Centered Tube vs Rollouts")
             ax.grid(True)
             ax.legend(loc="best")
 

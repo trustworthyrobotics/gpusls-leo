@@ -196,20 +196,29 @@ def get_controller(Q, R, A, B, C, D, E, eta_stage, eta_f):
     return Phi_x, Phi_u
 
 @jax.jit
-def get_betas(C, D, Phi_x, Phi_u, E):
+def get_betas(C, D, Phi_x, Phi_u, E, center):
     T = Phi_u.shape[0]
     Tp1 = T + 1
     nc = C.shape[1]
 
-    # E must be time-varying: [T+1, nw, ne]
+    # Radius Term
     Phi_x_E = jnp.einsum("kjxn,jne->kjxe", Phi_x, E)
     Phi_u_E = jnp.einsum("kjun,jne->kjue", Phi_u, E)
 
     term_x = jnp.einsum("kix,kjxe->kjie", C[:-1], Phi_x_E[:-1])
     term_u = jnp.einsum("kiu,kjue->kjie", D[:-1], Phi_u_E)
     gPhi = term_x + term_u
+    
+    # Offeset Term
+    Phi_x_c = jnp.einsum("kjxn,jn->kjx", Phi_x, center)
+    Phi_u_c = jnp.einsum("kjun,jn->kju", Phi_u, center)
 
-    beta_stage = jnp.sum(jnp.abs(gPhi), axis=-1) ** 2
+    offset_x = jnp.einsum("kix,kjx->kji", C[:-1], Phi_x_c[:-1])
+    offset_u = jnp.einsum("kiu,kju->kji", D[:-1], Phi_u_c)
+    offset = offset_x + offset_u
+
+    support_stage = offset + jnp.sum(jnp.abs(gPhi), axis=-1)
+    beta_stage = jnp.maximum(support_stage, 0.0) ** 2
 
     k_idx = jnp.arange(T)[:, None]
     j_idx = jnp.arange(Tp1)[None, :]
@@ -217,7 +226,10 @@ def get_betas(C, D, Phi_x, Phi_u, E):
     beta_stage = beta_stage * mask[:, :, None]
 
     gPhi_term = jnp.einsum("ix,jxe->jie", C[-1], Phi_x_E[-1])
-    beta_term = jnp.sum(jnp.abs(gPhi_term), axis=-1) ** 2
+    offset_term = jnp.einsum("ix,jx->ji", C[-1], Phi_x_c[-1])
+
+    support_term = offset_term + jnp.sum(jnp.abs(gPhi_term), axis=-1)
+    beta_term = jnp.maximum(support_term, 0.0) ** 2
 
     beta = jnp.zeros((Tp1, Tp1, nc), dtype=Phi_x.dtype)
     beta = beta.at[:-1].set(beta_stage)
@@ -320,22 +332,44 @@ def get_tube_width(Phi_x, Phi_u, E):
 
     return x_width, u_width
 
+def get_tube_interval(Phi_x, Phi_u, E, center):
+    Phi_x_E = jnp.einsum("kjxn,jne->kjxe", Phi_x, E)   # [T+1, T+1, nx, ne]
+    Phi_u_E = jnp.einsum("kjun,jne->kjue", Phi_u, E)   # [T,   T+1, nu, ne]
+
+    x_width = jnp.linalg.norm(Phi_x_E, ord=1, axis=-1).sum(axis=1)
+    u_width = jnp.linalg.norm(Phi_u_E, ord=1, axis=-1).sum(axis=1)
+
+    x_offset = jnp.einsum("kjxn,jn->kx", Phi_x, center)
+    x_width_lower = x_offset - x_width
+    x_width_upper = x_offset + x_width
+
+    u_offset = jnp.einsum("kjun,jn->ku", Phi_u, center)
+    u_width_lower = u_offset - u_width
+    u_width_upper = u_offset + u_width
+
+    return x_width_lower, x_width_upper, u_width_lower, u_width_upper
+
 @partial(jit, static_argnums=(5, 6))
 def get_combined_disturbance(
     E,
     X, U, Phi_x, Phi_u,
-    remainder_func, splits_cfg, E_prev
+    remainder_func, splits_cfg, E_prev, r_center_prev
 ):
     T = U.shape[0]
     nx = X.shape[1]
     nu = U.shape[1]
 
-    x_tube_widths, u_tube_widths = get_tube_width(Phi_x, Phi_u, E_prev)
-    jax.debug.print("Tube widths:{}", x_tube_widths)
+    (x_tube_width_lower, x_tube_width_upper,
+     u_tube_width_lower, u_tube_width_upper) = get_tube_interval(Phi_x, Phi_u, E_prev, r_center_prev)
+    # jax.debug.print("Tube widths:{}", x_tube_widths)
 
     U_pad = jnp.concatenate([U, U[-1:]], axis=0)
-    u_width_pad = jnp.concatenate(
-        [u_tube_widths, jnp.zeros((1, nu), dtype=u_tube_widths.dtype)],
+    u_width_lower_pad = jnp.concatenate(
+        [u_tube_width_lower, jnp.zeros((1, nu), dtype=u_tube_width_lower.dtype)],
+        axis=0
+    )
+    u_width_upper_pad = jnp.concatenate(
+        [u_tube_width_upper, jnp.zeros((1, nu), dtype=u_tube_width_upper.dtype)],
         axis=0
     )
 
@@ -343,17 +377,20 @@ def get_combined_disturbance(
     t_width = jnp.zeros_like(t)
 
     z_center = jnp.concatenate([X, U_pad, t], axis=-1)
-    z_width  = jnp.concatenate([x_tube_widths, u_width_pad, t_width], axis=-1)
+    z_width_lower  = jnp.concatenate([x_tube_width_lower, u_width_lower_pad, t_width], axis=-1)
+    z_width_upper  = jnp.concatenate([x_tube_width_upper, u_width_upper_pad, t_width], axis=-1)
 
-    z_lo = z_center - z_width
-    z_up = z_center + z_width
+    z_lo = z_center + z_width_lower
+    z_up = z_center + z_width_upper
     # jax.debug.print("Z_center: {}", z_center)
-    r_bound = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo, z_up)   # [T+1, nx]
+    r_bound_lower, r_bound_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo, z_up)   # [T+1, nx]
     # jax.debug.print("Remainder: {}", r_bound)
-    diag_r = jax.vmap(jnp.diag)(r_bound)                              # [T+1, nx, nx]
+    r_center = (r_bound_lower + r_bound_upper) / 2
+    r_radius = (r_bound_upper - r_bound_lower) / 2
+    diag_r = jax.vmap(jnp.diag)(r_radius)                              # [T+1, nx, nx]
 
     E_combined = jnp.concatenate([E, diag_r], axis=2)                # [T+1, nx, 2nx]
-    return E_combined
+    return E_combined, r_center
 
 def get_combined_zeros(E):
     T_plus_1, nx, _ = E.shape
@@ -368,7 +405,7 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
                        A: jnp.ndarray, B: jnp.ndarray, c: jnp.ndarray,
                        C: jnp.ndarray, D: jnp.ndarray, f: jnp.ndarray,
                        w: jnp.ndarray, y: jnp.ndarray, rho: jnp.ndarray, # ADMM Params
-                       sls_config: SLSConfig, splits_cfg, E: jnp.ndarray, E_prev: jnp.ndarray, Q_bar: jnp.ndarray, R_bar: jnp.ndarray,
+                       sls_config: SLSConfig, splits_cfg, E: jnp.ndarray, E_prev: jnp.ndarray, r_center_prev: jnp.ndarray, Q_bar: jnp.ndarray, R_bar: jnp.ndarray,
                        obstacles: jnp.ndarray, primal_pos: jnp.ndarray, h_ct_ws: jnp.ndarray,
                        beta_ws: jnp.ndarray, mu_ws: jnp.ndarray, Phi_x_ws: jnp.ndarray, Phi_u_ws: jnp.ndarray, X: jnp.ndarray, U: jnp.ndarray):
     Tp1 = Q.shape[0]
@@ -391,19 +428,19 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
     tol = jnp.array(sls_config.sls_primal_tol, dtype=Q.dtype)
 
     h_ct0 = h_ct_ws
-    carry0 = (i0, beta_ws, x0, u0, v0, w, y, rho, converged0, converged0, h_ct0, Phi_x_ws, Phi_u_ws, mu_ws, E_prev)
+    r_center0 = r_center_prev
+    carry0 = (i0, beta_ws, x0, u0, v0, w, y, rho, converged0, converged0, h_ct0, Phi_x_ws, Phi_u_ws, mu_ws, E_prev, r_center0)
 
     def cond_fn(carry):
-        i, _, _, _, _, _, _, _, converged, _, _, _, _, _, _ = carry
+        i, _, _, _, _, _, _, _, converged, _, _, _, _, _, _, _ = carry
         return jnp.logical_and(i < max_iter, jnp.logical_not(converged))
 
     def body_fn(carry):
-        i, beta, x_curr, u_curr, v_curr, w, y, rho, converged, _, h_ct, Phi_x_prev, Phi_u_prev, mu, E_prev = carry
+        i, beta, x_curr, u_curr, v_curr, w, y, rho, converged, _, h_ct, Phi_x_prev, Phi_u_prev, mu, E_prev, r_center = carry
         if sls_config.enable_linearization_bounds:
-            E_aug = get_combined_disturbance(E, X, U, Phi_x_prev, Phi_u_prev, remainder_func, splits_cfg, E_prev)
+            E_aug, r_center = get_combined_disturbance(E, X, U, Phi_x_prev, Phi_u_prev, remainder_func, splits_cfg, E_prev, r_center)
         else:
             E_aug = get_combined_zeros(E)
-        # E_aug = get_combined_disturbance(E, X, U, Phi_x_prev, Phi_u_prev, remainder_func, splits_cfg, E_prev)
         prev_rho = rho
         x_prev = x_curr
         u_prev = u_curr
@@ -414,7 +451,7 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
             C_box = C[:, :num_regular_constraints, :]
             D_box = D[:, :num_regular_constraints, :]
             Phi_x, Phi_u = get_controller(Q_bar, R_bar, A, B, C_box, D_box, E_aug, eta_stage, eta_f)
-            beta = get_betas(C_box, D_box, Phi_x, Phi_u, E_aug)
+            beta = get_betas(C_box, D_box, Phi_x, Phi_u, E_aug, r_center)
             h_ct = get_constraint_tightenings(beta)
         tightened_constraints = f[:, :num_regular_constraints] - h_ct
         tightened_constraints_all = add_obstacle_tightenings(obstacles, primal_pos, h_ct, tightened_constraints)
@@ -433,9 +470,8 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
         C_box = C[:, :num_regular_constraints, :]
         D_box = D[:, :num_regular_constraints, :]
         Phi_x, Phi_u = get_controller(Q_bar, R_bar, A, B, C_box, D_box, E_aug, eta_stage, eta_f)
-        beta = get_betas(C_box, D_box, Phi_x, Phi_u, E_aug)
+        beta = get_betas(C_box, D_box, Phi_x, Phi_u, E_aug, r_center)
         h_ct = get_constraint_tightenings(beta)
-        # rho = jnp.maximum(jnp.minimum(rho, 1e4) * 0.9, 0.1)
         rho = jnp.minimum(rho, 1.0)
         y = prev_rho / rho * y
         rho = jnp.asarray(rho, dtype=prev_rho.dtype)
@@ -445,8 +481,8 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
         converged = jnp.logical_or(converged, converged_now)
 
         return (i + jnp.array(1, dtype=jnp.int32),
-                beta, x_curr, u_curr, v_curr, w, y, rho, converged, converged_admm, h_ct, Phi_x, Phi_u, mu, E_aug)
+                beta, x_curr, u_curr, v_curr, w, y, rho, converged, converged_admm, h_ct, Phi_x, Phi_u, mu, E_aug, r_center)
 
     carryN = jax.lax.while_loop(cond_fn, body_fn, carry0)
-    _, betaN, xN, uN, vN, wN, yN, rhoN, convergedN, converged_admm, h_ct, Phi_x, Phi_u, muN, EN = carryN
-    return xN, uN, vN, wN, yN, rhoN, convergedN, converged_admm, h_ct, Phi_x, Phi_u, betaN, muN, EN
+    _, betaN, xN, uN, vN, wN, yN, rhoN, convergedN, converged_admm, h_ct, Phi_x, Phi_u, muN, EN, r_centerN = carryN
+    return xN, uN, vN, wN, yN, rhoN, convergedN, converged_admm, h_ct, Phi_x, Phi_u, betaN, muN, EN, r_centerN
