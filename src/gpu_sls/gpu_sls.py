@@ -353,7 +353,7 @@ def get_tube_interval(Phi_x, Phi_u, E, center):
 def get_combined_disturbance(
     E,
     X, U, Phi_x, Phi_u,
-    remainder_func, splits_cfg, E_prev, r_center_prev
+    remainder_func, splits_cfg, E_prev, r_center_prev, disturbance_center
 ):
     T = U.shape[0]
     nx = X.shape[1]
@@ -390,7 +390,8 @@ def get_combined_disturbance(
     diag_r = jax.vmap(jnp.diag)(r_radius)                              # [T+1, nx, nx]
 
     E_combined = jnp.concatenate([E, diag_r], axis=2)                # [T+1, nx, 2nx]
-    return E_combined, r_center
+    combined_center = r_center + disturbance_center
+    return E_combined, combined_center
 
 def get_combined_zeros(E):
     T_plus_1, nx, _ = E.shape
@@ -407,7 +408,7 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
                        w: jnp.ndarray, y: jnp.ndarray, rho: jnp.ndarray, # ADMM Params
                        sls_config: SLSConfig, splits_cfg, E: jnp.ndarray, E_prev: jnp.ndarray, r_center_prev: jnp.ndarray, Q_bar: jnp.ndarray, R_bar: jnp.ndarray,
                        obstacles: jnp.ndarray, primal_pos: jnp.ndarray, h_ct_ws: jnp.ndarray,
-                       beta_ws: jnp.ndarray, mu_ws: jnp.ndarray, Phi_x_ws: jnp.ndarray, Phi_u_ws: jnp.ndarray, X: jnp.ndarray, U: jnp.ndarray):
+                       beta_ws: jnp.ndarray, mu_ws: jnp.ndarray, Phi_x_ws: jnp.ndarray, Phi_u_ws: jnp.ndarray, X: jnp.ndarray, U: jnp.ndarray, disturbance_center: jnp.ndarray):
     Tp1 = Q.shape[0]
     nx  = Q.shape[1]
     nu  = R.shape[1]
@@ -438,9 +439,10 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
     def body_fn(carry):
         i, beta, x_curr, u_curr, v_curr, w, y, rho, converged, _, h_ct, Phi_x_prev, Phi_u_prev, mu, E_prev, r_center = carry
         if sls_config.enable_linearization_bounds:
-            E_aug, r_center = get_combined_disturbance(E, X, U, Phi_x_prev, Phi_u_prev, remainder_func, splits_cfg, E_prev, r_center)
+            E_aug, r_center = get_combined_disturbance(E, X, U, Phi_x_prev, Phi_u_prev, remainder_func, splits_cfg, E_prev, r_center, disturbance_center)
         else:
             E_aug = get_combined_zeros(E)
+            r_center = disturbance_center
         prev_rho = rho
         x_prev = x_curr
         u_prev = u_curr

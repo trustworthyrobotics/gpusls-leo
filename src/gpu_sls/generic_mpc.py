@@ -45,6 +45,7 @@ class GenericMPC:
         cost, Q_bar, R_bar,
         num_constraints: int,
         disturbance,
+        disturbance_center,
         X_in, U_in,
         neural_dynamics: bool = False,
         shift: int = 1,
@@ -76,6 +77,7 @@ class GenericMPC:
         self.constraints = constraints
         self.cost = cost
         self.disturbance = disturbance
+        self.disturbance_center = disturbance_center
 
         self.Q_bar = Q_bar
         self.R_bar = R_bar
@@ -114,7 +116,7 @@ class GenericMPC:
         X, U, V, w, y, rho, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN = self._solve(
             reference,
             parameter,
-            self.config.W,
+            self.config.W, self.disturbance_center,
             x0, self.X0, self.U0, self.V0,
             self.w, self.y, self.rho,
             self.obstacles,
