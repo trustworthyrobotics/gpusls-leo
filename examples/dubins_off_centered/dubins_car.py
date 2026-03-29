@@ -32,6 +32,7 @@ config.update(
 # Goal stopping config
 # -----------------------------
 GOAL_TOL = 0.2  # meters (XY distance)
+DISTURBANCE_OFFSET = 0.0005
 
 def reached_goal_xy(x: jnp.ndarray, x_goal: jnp.ndarray, tol: float = GOAL_TOL) -> jnp.bool_:
     dxy = x[:2] - x_goal[:2]
@@ -140,8 +141,9 @@ def dubins_step_with_disturbance(
         w = jnp.array([-0.577, -0.577, -0.577], dtype=x.dtype)
 
     # Additive disturbance
-    x_next = x_nom + (E @ w)
-    return key, x_next, w
+    injected_disturbance = (E @ w + DISTURBANCE_OFFSET)
+    x_next = x_nom + injected_disturbance
+    return key, x_next, injected_disturbance
 
 def dynamics(x: jnp.ndarray, u: jnp.ndarray, t: jnp.ndarray, *, parameter: Any) -> jnp.ndarray:
     """Discrete-time dynamics required by your model evaluator."""
@@ -321,12 +323,16 @@ def main():
     # Q_bar = jnp.broadcast_to(Q, (N + 1, n, n))
     # R_bar = jnp.broadcast_to(R, (N, nu, nu))
 
+    # disturbance_center = jnp.zeros((N + 1, n))
+    disturbance_center = jnp.full((N + 1, n), DISTURBANCE_OFFSET)
+
     controller = GenericMPC(
         sls_cfg,
         sqp_cfg,
         admm_cfg,
         config=cfg,
         dynamics=dynamics,
+        disturbance_center=disturbance_center,
         constraints=constraints_all,
         obstacles=obstacles,
         cost=cost,
@@ -369,12 +375,12 @@ def main():
 
             u = U_pred[k] + disturbance_feedback
 
-            key, x, w = dubins_step_with_disturbance(key, x, u, E_sim, dt, i)
+            key, x, injected_disturbance = dubins_step_with_disturbance(key, x, u, E_sim, dt, i)
 
             # disturbed[i, k] = np.asarray(x - X_pred[k + 1])
             disturbed[i, k] = np.asarray(x)
 
-            disturbance_history.append(E_sim @ w)
+            disturbance_history.append(injected_disturbance)
 
             xs[i, k] = np.asarray(x)
 

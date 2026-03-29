@@ -417,6 +417,12 @@ def get_K(tilde_R, tilde_M, A, B, P):
     return vmap(one)(jnp.arange(T))
 
 def constrained_solve(cfg: ADMMConfig, Q, q, R, r, M, A, B, c, C, D, f, w, y, rho):
+    # jax.debug.print("A: {}", A)
+    # jax.debug.print("B: {}", B)
+    # jax.debug.print("c: {}", c)
+    # jax.debug.print("C: {}", C)
+    # jax.debug.print("D: {}", D)
+    # jax.debug.print("f: {}", f)
     rho_max = cfg.rho_max
     def one_iter(carry):
         (it, tilde_Q, tilde_q, tilde_R, tilde_r, tilde_M, 

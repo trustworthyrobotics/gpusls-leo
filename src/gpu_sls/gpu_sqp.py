@@ -287,7 +287,7 @@ def compute_search_direction(
             E, E_prev, r_center_prev, Q_bar, R_bar, obstacles, X, h_ct_ws, beta_ws, mu_ws, Phi_x_ws, Phi_u_ws, X, U, disturbance_center
         )
         return dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN
-
+    
     use_nominal = jnp.logical_or(
         jnp.logical_not(sls_config.enable_fastsls),
         jnp.logical_and(sls_config.initialize_nominal, sqp_iteration < sls_config.max_initial_sqp_iterations)
@@ -295,7 +295,7 @@ def compute_search_direction(
     dX, dU, dV, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN = lax.cond(
         use_nominal, run_nominal, run_sls, operand=None
     )
-
+    # jax.debug.print("{}", use_nominal)
     return dX, dU, dV, q, r, w1, y1, rho1, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN
 
 
@@ -363,9 +363,6 @@ def sqp(
             step_ok = step <= sqp_config.step_tol * (1.0 + z_norm)
             jax.debug.print("SQP Iteration {} Feas {} (<= {}) Step {} (<= {})", i, feas, sqp_config.feas_tol, step, sqp_config.step_tol)
             converged1 = jnp.logical_and(feas_ok, step_ok)
-            X_next = lax.select(converged1, X_curr, X_curr + dX)
-            U_next = lax.select(converged1, U_curr, U_curr + dU)
-            V_next = lax.select(converged1, V_curr, V_curr + dV)
 
             g, c = model_evaluator(X_curr, U_curr)
 
@@ -387,8 +384,8 @@ def sqp(
             )
             current_merit = merit_fn(V_curr, g, c, X_curr, U_curr, Phi_x1, Phi_u1, r_center_prev)
             merit_slope = slope(dX, dU, dV, c, q, r, rho_merit)
-            last_iter = (i == (sqp_config.max_sqp_iterations + sls_config.max_initial_sqp_iterations - 1))
-            do_ls = jnp.logical_and(jnp.array(bool(sqp_config.line_search)), jnp.logical_not(last_iter))
+            last_iter = (i >= (sqp_config.max_sqp_iterations + sls_config.max_initial_sqp_iterations - 3))
+            do_ls = jnp.logical_and(jnp.logical_and(jnp.array(bool(sqp_config.line_search)), jnp.logical_not(last_iter)), jnp.logical_not(converged1))
 
             def ls_branch(_):
                 Xn, Un, Vn, g_new, c_new, ok = line_search(
@@ -418,6 +415,24 @@ def sqp(
             Phi_x_next = Phi_x1
             Phi_u_next = Phi_u1
 
+            def fastsls_branch(_):
+                return (
+                    sls_config.max_initial_sqp_iterations,
+                    jnp.array(False)
+                )
+
+            def no_fastsls_branch(_):
+                return (i, converged1)
+
+            i_new, converged1_new = lax.cond(
+                jnp.logical_and(
+                    jnp.logical_and(jnp.array(sls_config.enable_fastsls), converged1),
+                    i < sls_config.max_initial_sqp_iterations
+                ),
+                fastsls_branch,
+                no_fastsls_branch,
+                operand=None
+            )
             # w_next = lax.select(converged1, w, w1)
             # y_next = lax.select(converged1, y, y1)
             # rho_next = lax.select(converged1, rho, rho1)
@@ -427,8 +442,8 @@ def sqp(
             # Phi_x_next = lax.select(converged1, Phi_x, Phi_x1)
             # Phi_u_next = lax.select(converged1, Phi_u, Phi_u1)
 
-            return (i + 1, X_next, U_next, V_next, w_next, y_next, rho_next,
-                    jnp.logical_or(converged, converged1),
+            return (i_new + 1, X_next, U_next, V_next, w_next, y_next, rho_next,
+                    converged1_new,
                     backoffs_next, Phi_x_next, Phi_u_next, betaN, muN, EN, r_centerN)
 
         return lax.cond(converged, do_nothing, do_iter, operand=None)

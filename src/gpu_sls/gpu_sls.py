@@ -384,9 +384,9 @@ def get_combined_disturbance(
     z_up = z_center + z_width_upper
     # jax.debug.print("Z_center: {}", z_center)
     r_bound_lower, r_bound_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo, z_up)   # [T+1, nx]
-    # jax.debug.print("Remainder: {}", r_bound)
     r_center = (r_bound_lower + r_bound_upper) / 2
     r_radius = (r_bound_upper - r_bound_lower) / 2
+    # jax.debug.print("Remainder: {}", r_radius)
     diag_r = jax.vmap(jnp.diag)(r_radius)                              # [T+1, nx, nx]
 
     E_combined = jnp.concatenate([E, diag_r], axis=2)                # [T+1, nx, 2nx]
@@ -415,7 +415,6 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
     nc  = w.shape[1]
     num_obstacles = obstacles.shape[0]
     T   = Tp1 - 1
-
     # beta0 = jnp.ones((Tp1, Tp1, nc - num_obstacles), dtype=Q.dtype) * 1e-10
     # h_ct0 = jnp.zeros((Tp1, nc - num_obstacles))
     x0 = jnp.zeros((Tp1, nx), dtype=Q.dtype)

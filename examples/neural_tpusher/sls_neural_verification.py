@@ -261,7 +261,7 @@ def main(config: DictConfig):
         rti=False,
         enable_linearization_bounds=True,
         enable_linearization_gradients=True,
-        lambda_rem=4.0
+        lambda_rem=32.0
     )
 
     sqp_cfg = SQPConfig(
