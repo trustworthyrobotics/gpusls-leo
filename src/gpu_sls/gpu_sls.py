@@ -25,7 +25,7 @@ class SLSConfig:
     max_initial_sqp_iterations: int = 0
     enable_linearization_bounds: bool = False
     enable_linearization_gradients: bool = False
-    lambda_rem: float = 0.1
+    lambda_rem: float = 0.0
 
 
 
@@ -358,10 +358,11 @@ def get_combined_disturbance(
     T = U.shape[0]
     nx = X.shape[1]
     nu = U.shape[1]
-
+    # jax.debug.print("E_prev: {}", E_prev)
+    # jax.debug.print("Phi_x: {}", Phi_x)
+    # jax.debug.print("Phi_u: {}", Phi_u)
     (x_tube_width_lower, x_tube_width_upper,
      u_tube_width_lower, u_tube_width_upper) = get_tube_interval(Phi_x, Phi_u, E_prev, r_center_prev)
-    # jax.debug.print("Tube widths:{}", x_tube_widths)
 
     U_pad = jnp.concatenate([U, U[-1:]], axis=0)
     u_width_lower_pad = jnp.concatenate(
@@ -382,11 +383,14 @@ def get_combined_disturbance(
 
     z_lo = z_center + z_width_lower
     z_up = z_center + z_width_upper
-    # jax.debug.print("Z_center: {}", z_center)
     r_bound_lower, r_bound_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo, z_up)   # [T+1, nx]
     r_center = (r_bound_lower + r_bound_upper) / 2
     r_radius = (r_bound_upper - r_bound_lower) / 2
-    # jax.debug.print("Remainder: {}", r_radius)
+    # jax.debug.print("Z_width lowr: {} z_width_upper: {}", z_width_lower, z_width_upper)
+    jax.debug.print(
+        "Nonzeros: {}",
+        jnp.sum(r_radius != 0)
+    )
     diag_r = jax.vmap(jnp.diag)(r_radius)                              # [T+1, nx, nx]
 
     E_combined = jnp.concatenate([E, diag_r], axis=2)                # [T+1, nx, 2nx]

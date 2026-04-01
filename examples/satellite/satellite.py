@@ -7,15 +7,6 @@ from typing import Any, Callable
 import jax
 import jax.numpy as jnp
 from jax import config
-import numpy as np
-
-from gpu_sls.gpu_admm import ADMMConfig
-from gpu_sls.gpu_sls import SLSConfig
-from gpu_sls.gpu_sqp import SQPConfig
-from gpu_sls.generic_mpc import GenericMPC, MPCConfig
-from gpu_sls.utils.constraint_utils import combine_constraints
-from gpu_sls.utils.sls_visual import get_trajectory_tubes, plot_tube_graph
-
 config.update("jax_enable_x64", False)
 config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 config.update("jax_persistent_cache_min_compile_time_secs", 0)
@@ -24,6 +15,14 @@ config.update(
     "jax_persistent_cache_enable_xla_caches",
     "xla_gpu_per_fusion_autotune_cache_dir",
 )
+import numpy as np
+
+from gpu_sls.gpu_admm import ADMMConfig
+from gpu_sls.gpu_sls import SLSConfig
+from gpu_sls.gpu_sqp import SQPConfig
+from gpu_sls.generic_mpc import GenericMPC, MPCConfig
+from gpu_sls.utils.constraint_utils import combine_constraints
+from gpu_sls.utils.sls_visual import get_trajectory_tubes, plot_tube_graph
 
 NUM_RANDOM = 5
 NUM_ADV = 26
@@ -351,29 +350,29 @@ def main():
     E_sim = E_sim.at[6, 6].set(alpha_sim)
 
     admm_cfg = ADMMConfig(
-        eps_abs=1e-2,
+        eps_abs=1e-1,
         eps_rel=0,
         rho_max=2e2,
-        max_iterations=400,
+        max_iterations=30,
         rho_update_frequency=2,
         initial_rho=5e-3,
     )
 
     sls_cfg = SLSConfig(
         max_sls_iterations=2,
-        sls_primal_tol=1e-2,
+        sls_primal_tol=1e-5,
         enable_fastsls=True,
         initialize_nominal=True,
-        max_initial_sqp_iterations=30,
+        max_initial_sqp_iterations=100,
         warm_start=False,
         rti=False,
-        enable_linearization_bounds=False,
+        enable_linearization_bounds=True,
         enable_linearization_gradients=False,
-        lambda_rem=4.0
+        lambda_rem=0.0
     )
 
     sqp_cfg = SQPConfig(
-        max_sqp_iterations=10,
+        max_sqp_iterations=50,
         warm_start=False,
         feas_tol=0.01,
         step_tol=0.0001,

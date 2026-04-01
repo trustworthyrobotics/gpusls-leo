@@ -48,6 +48,7 @@ class GenericMPC:
         disturbance_center,
         X_in, U_in,
         neural_dynamics: bool = False,
+        use_taylor_model: bool = False,
         shift: int = 1,
         model_dir = "",
     ):
@@ -68,6 +69,9 @@ class GenericMPC:
 
         self.U0 = U_in
         self.X0 = X_in
+        self.XK = self.X0
+        self.UK = self.U0
+
         self.V0 = jnp.zeros((config.N + 1, config.n))
         self.w = jnp.zeros((config.N + 1, num_constraints))
         self.y = jnp.zeros((config.N + 1, num_constraints))
@@ -92,13 +96,18 @@ class GenericMPC:
             t_dim=1,
             t_as_scalar=True
         )
-        if not neural_dynamics:
-            remainder_func = partial(remainder_bound_path_based, f_flat, state_dim=config.n)
-        else:
+        if neural_dynamics:
             # TODO: Remove this hardcoded
             model = load_model(model_dir)
             split_budget = (5, 5, 4, 1, 4, 1, 1)
             remainder_func = make_remainder_bound_builder(model, split_budget=split_budget)
+        if use_taylor_model:
+            D = config.n + config.nu
+            V = D + 1
+            rhs_tm_fn = build_auto_rhs_analytic(dynamics, D=D, V=V, lagrange_impl=regular_lagrange)
+        else:
+            remainder_func = partial(remainder_bound_path_based, f_flat, state_dim=config.n)
+        
         splts_cfg = (4, 4, 4, 4)
 
         work = partial(
@@ -112,12 +121,75 @@ class GenericMPC:
         )
         self._solve = jax.jit(work)
 
+    def reset(self, **overrides):
+        """
+        Reset all internal solver state (warm starts, duals, tubes, etc.)
+        to default values. Optionally override any field.
+
+        Example:
+            mpc.reset()
+            mpc.reset(U0=new_U, rho=0.1)
+        """
+
+        cfg = self.config
+        num_constraints = self.w.shape[1]
+        num_obstacles = self.obstacles.shape[0]
+
+        # -----------------------------
+        # Default values (same as __init__)
+        # -----------------------------
+        defaults = dict(
+            h_ct_ws=jnp.zeros((cfg.N + 1, num_constraints - num_obstacles)),
+            beta_ws=jnp.ones((cfg.N + 1, cfg.N + 1, num_constraints - num_obstacles)) * 1e-10,
+            mu_ws=jnp.zeros((cfg.N + 1, num_constraints)),
+
+            Phi_x_ws=jnp.zeros((cfg.N + 1, cfg.N + 1, cfg.n, cfg.n)),
+            Phi_u_ws=jnp.zeros((cfg.N, cfg.N + 1, cfg.nu, cfg.n)),
+
+            E_prev=jnp.zeros((cfg.N + 1, cfg.n, 2 * cfg.n)),
+            r_center_prev=jnp.zeros((cfg.N + 1, cfg.n)),
+
+            U0=jnp.tile(cfg.u_ref, (cfg.N, 1)),
+            X0=jnp.zeros((cfg.N + 1, cfg.n)),
+            V0=jnp.zeros((cfg.N + 1, cfg.n)),
+
+            w=jnp.zeros((cfg.N + 1, num_constraints)),
+            y=jnp.zeros((cfg.N + 1, num_constraints)),
+            rho=jnp.asarray(self.admm_config.initial_rho),
+        )
+
+        # -----------------------------
+        # Apply overrides
+        # -----------------------------
+        defaults.update(overrides)
+
+        # -----------------------------
+        # Assign back to object
+        # -----------------------------
+        self.h_ct_ws = defaults["h_ct_ws"]
+        self.beta_ws = defaults["beta_ws"]
+        self.mu_ws = defaults["mu_ws"]
+
+        self.Phi_x_ws = defaults["Phi_x_ws"]
+        self.Phi_u_ws = defaults["Phi_u_ws"]
+
+        self.E_prev = defaults["E_prev"]
+        self.r_center_prev = defaults["r_center_prev"]
+
+        self.U0 = defaults["U0"]
+        self.XK = self.X0
+        self.UK = self.U0
+
+        self.w = defaults["w"]
+        self.y = defaults["y"]
+        self.rho = jnp.asarray(self.admm_config.initial_rho, dtype=self.rho.dtype)
+
     def run(self, x0: jnp.ndarray, reference: jnp.ndarray, parameter: Any):
         X, U, V, w, y, rho, backoffs, Phi_x, Phi_u, betaN, muN, EN, r_centerN = self._solve(
             reference,
             parameter,
             self.config.W, self.disturbance_center,
-            x0, self.X0, self.U0, self.V0,
+            x0, self.XK, self.UK, self.V0,
             self.w, self.y, self.rho,
             self.obstacles,
             self.h_ct_ws, self.beta_ws, self.mu_ws, self.Phi_x_ws, self.Phi_u_ws, self.E_prev, self.r_center_prev
@@ -150,14 +222,14 @@ class GenericMPC:
             return jnp.concatenate([arr[s:], tail], axis=0)
 
         # ---- primal warm starts ----
-        self.U0 = jax.lax.cond(
+        self.UK = jax.lax.cond(
             invalid,
             lambda _: jnp.tile(self.config.u_ref, (self.config.N, 1)),
             lambda _: shift_and_pad(U),
             operand=None,
         )
 
-        self.X0 = jax.lax.cond(
+        self.XK = jax.lax.cond(
             invalid,
             lambda _: jnp.tile(x0, (self.config.N + 1, 1)),
             lambda _: shift_and_pad(X),

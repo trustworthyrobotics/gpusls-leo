@@ -508,16 +508,17 @@ def main():
     # Solver configs
     # -----------------------------
     admm_cfg = ADMMConfig(
-        eps_abs=1e-1,
+        eps_abs=5e-2,
         eps_rel=1e-4,
         rho_max=5e1,
         max_iterations=400,
-        rho_update_frequency=2,
+        rho_update_frequency=1,
         initial_rho=1.0,
     )
+    disturbance_center = jnp.full((H + 1, N), 0.0)
 
     sls_cfg = SLSConfig(
-        max_sls_iterations=3,
+        max_sls_iterations=2,
         sls_primal_tol=1e-2,
         enable_fastsls=True,
         initialize_nominal=True,
@@ -526,7 +527,7 @@ def main():
         rti=False,
         enable_linearization_bounds=True,
         enable_linearization_gradients=False,
-        lambda_rem=2.0,
+        lambda_rem=0.0,
     )
 
     sqp_cfg = SQPConfig(
@@ -567,6 +568,7 @@ def main():
         cost=cost,
         Q_bar=Q_bar,
         R_bar=R_bar,
+        disturbance_center=disturbance_center,
         num_constraints=nc,
         disturbance=disturbance,
         shift=1,
@@ -581,7 +583,14 @@ def main():
     u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, E_prev, r_centerN = controller.run(
         x0=x0, reference=reference, parameter=parameter
     )
-
+    # controller.reset()
+    # import time
+    # start = time.perf_counter()
+    # u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, E_prev, r_centerN = controller.run(
+    #     x0=x0, reference=reference, parameter=parameter
+    # )
+    # end = time.perf_counter()
+    # jax.debug.print("RUNTIME: {}", (end - start))
     # jax.debug.print("{}", r_centerN)
     jax.debug.print(
         "nonzero values: {}",
@@ -646,17 +655,17 @@ def main():
     )
     tube = get_trajectory_tubes(Phi_x, E_prev)
 
-    plot_tube_graph_multiquadrotor(
-        disturbed=disturbed,
-        X_pred=X_pred,
-        Phi_x=Phi_x,
-        r_centerN=r_centerN,
-        tube=tube,
-        dt=dt,
-        N_QUADS=N_QUADS,
-        SINGLE_N=SINGLE_N,
-        filename="multi_quadrotor_disturbance_vs_tube_size.png",
-    )
+    # plot_tube_graph_multiquadrotor(
+    #     disturbed=disturbed,
+    #     X_pred=X_pred,
+    #     Phi_x=Phi_x,
+    #     r_centerN=r_centerN,
+    #     tube=tube,
+    #     dt=dt,
+    #     N_QUADS=N_QUADS,
+    #     SINGLE_N=SINGLE_N,
+    #     filename="multi_quadrotor_disturbance_vs_tube_size.png",
+    # )
     # # -----------------------------
     # # Visualize first quad only in XY
     # # -----------------------------

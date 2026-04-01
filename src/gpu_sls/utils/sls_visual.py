@@ -61,9 +61,6 @@ def plot_tube_graph(
         tube_i_upper = tube_trim_upper[:, idx]
         dev_all = disturbed[:, :, idx]
 
-        # tube
-        ax.plot(t, tube_i_lower, linewidth=3, label="tube size", color="tab:blue")
-        ax.plot(t, tube_i_upper, linewidth=3, label="tube size", color="tab:blue")
 
         # rollouts
         for r_idx, dev in enumerate(dev_all):
@@ -74,6 +71,10 @@ def plot_tube_graph(
                 alpha=0.8,
                 label="|x - nominal|" if r_idx == 0 else None,
             )
+
+        # tube
+        ax.plot(t, tube_i_lower, linewidth=4, label="tube size", color="tab:blue")
+        ax.plot(t, tube_i_upper, linewidth=4, label="tube size", color="tab:blue")
 
         ax.set_ylabel(state_labels[idx])
         ax.set_title(f"{state_labels[idx]}: Deviation vs Tube Size")

@@ -61,7 +61,7 @@ def main(config: DictConfig):
     data_config = config["data"]
     planning_config = config["planning"]
     seed = config["settings"]["seed"]
-    # seed = 42
+    seed = 42
 
     dt_dyn_dir = config["test_models"]["dt_dyn_dir"]
     dt_dyn = load_t_pushing_dt_dyn(dt_dyn_dir)
@@ -142,6 +142,8 @@ def main(config: DictConfig):
         warm_start=False,
         rti=False,
         enable_linearization_bounds=False,
+        enable_linearization_gradients=False,
+        lambda_rem=0.0
     )
 
     sqp_cfg = SQPConfig(
@@ -149,13 +151,12 @@ def main(config: DictConfig):
         warm_start=False,
         feas_tol=1e-2,
         step_tol=1e-4,
-        line_search=True,
+        line_search=False,
     )
 
     x_max = jnp.array([1000.0, 1000.0, 4 * jnp.pi, 1000.0, 1000.0], dtype=jnp.float64)
     x_min = -x_max
     x_min = x_min.at[1].set(Y_MIN)
-    x_max = x_max.at[0].set(X_MAX)
     constraints_all = make_state_box_constraints(x_min, x_max)
     constraints = constraints_all
 
@@ -167,6 +168,12 @@ def main(config: DictConfig):
     alpha_sim = E_mag * dt
     disturbance = make_constant_disturbance(n=n, alpha=alpha_sim)
 
+    disturbance_center = jnp.full((horizon + 1, n), 0.0)
+
+    R_bar = jnp.broadcast_to(jnp.eye(nu), (horizon, nu, nu))
+    Q_single = jnp.diag(jnp.array([10.0, 10.0, 0.1, 100.0, 100.0]))
+    Q_bar = jnp.broadcast_to(Q_single, (horizon + 1, n, n))
+
     controller = GenericMPC(
         sls_cfg,
         sqp_cfg,
@@ -175,14 +182,17 @@ def main(config: DictConfig):
         dynamics=dynamics,
         constraints=constraints,
         obstacles=obstacles,
+        disturbance_center=disturbance_center,
         cost=cost,
-        Q_bar=jnp.broadcast_to(jnp.eye(n), (horizon + 1, n, n)),
-        R_bar=jnp.broadcast_to(jnp.eye(nu), (horizon, nu, nu)),
+        Q_bar=Q_bar,
+        R_bar=R_bar,
         num_constraints=num_constraints,
         disturbance=disturbance,
         shift=1,
         X_in=jnp.zeros((horizon + 1, n)),
         U_in=jnp.zeros((horizon, nu)),
+        neural_dynamics=True,
+        model_dir=dt_dyn_dir,
     )
 
     jit_mppi_trajopt = make_mppi_trajopt(
@@ -261,9 +271,9 @@ def main(config: DictConfig):
         X_ref = X_init.at[:, 1].set(
             jnp.maximum(X_init[:, 1], Y_MIN)
         )
-        X_ref = X_ref.at[:, 0].set(
-            jnp.minimum(X_ref[:, 0], X_MAX)
-        )
+        # X_ref = X_ref.at[:, 0].set(
+        #     jnp.minimum(X_ref[:, 0], X_MAX)
+        # )
 
         reference = X_ref
 
@@ -332,6 +342,27 @@ def main(config: DictConfig):
 
             z_next, env_state, pusher_pos = trans_fn(env_dict)
             t += 1
+
+    np.savez(
+        os.path.join(out_dir, "full_run_visualization_data.npz"),
+        gt_states=np.asarray(gt_states, dtype=object),
+        planning_res_list=np.asarray(planning_res_list, dtype=object),
+        init_pose=np.asarray(init_pose),
+        target_pose=np.asarray(target_pose),
+        init_pusher_pos=np.asarray(init_pusher_pos),
+        scale=np.array(scale, dtype=np.float64),
+        Y_MIN=np.array(Y_MIN, dtype=np.float64),
+        X_MAX=np.array(X_MAX, dtype=np.float64),
+        stem_size=np.array(param_dict["stem_size"], dtype=np.float64),
+        bar_size=np.array(param_dict["bar_size"], dtype=np.float64),
+        pusher_size=np.array(param_dict["pusher_size"], dtype=np.float64),
+        window_size=np.asarray(param_dict["window_size"]),
+        y_constraint=np.array(param_dict["y_constraint"], dtype=np.float64),
+        x_constraint=np.array(param_dict["x_constraint"], dtype=np.float64),
+        dt=np.array(dt, dtype=np.float64),
+        horizon=np.array(horizon, dtype=np.int32),
+        n_act_step=np.array(n_act_step, dtype=np.int32),
+    )
 
     env.save_gif(os.path.join(out_dir, "sim_vis.gif"), fps=10)
     env.close()

@@ -55,6 +55,125 @@ import os
 import numpy as np
 import pymunk
 
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
+
+
+def plot_tubes_and_rollout_cloud(
+    X_pred,
+    lower,
+    upper,
+    xs,
+    save_path="visualizations/tubes_rollout_cloud.png",
+    cloud_times=(0, 5, 9),
+    has_pusher=True,
+):
+    """
+    Make one PNG:
+      - plot all tube boxes in the object xy plane
+      - overlay rollout state clouds at selected times
+
+    Parameters
+    ----------
+    X_pred : array, shape (T+1, n)
+        Nominal predicted trajectory.
+    lower : array, shape (T+1, n)
+        Tube lower bounds.
+    upper : array, shape (T+1, n)
+        Tube upper bounds.
+    xs : array, shape (n_rollouts, T, n)
+        Rollout trajectories.
+    save_path : str
+        Output PNG path.
+    cloud_times : iterable of int
+        Horizon indices to show rollout clouds for.
+    has_pusher : bool
+        Unused here, but kept for consistency with your codebase.
+    """
+    X_pred = np.asarray(X_pred)
+    lower = np.asarray(lower)
+    upper = np.asarray(upper)
+    xs = np.asarray(xs)
+
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    # -------------------------
+    # Plot nominal object path
+    # object x/y assumed to be state indices 0,1
+    # -------------------------
+    ax.plot(
+        X_pred[:, 0],
+        X_pred[:, 1],
+        "-k",
+        linewidth=2.0,
+        label="Nominal trajectory",
+        zorder=3,
+    )
+
+    # -------------------------
+    # Plot all tube boxes in xy
+    # -------------------------
+    for k in range(lower.shape[0]):
+        x_min = lower[k, 0]
+        y_min = lower[k, 1]
+        width = upper[k, 0] - lower[k, 0]
+        height = upper[k, 1] - lower[k, 1]
+
+        rect = Rectangle(
+            (x_min, y_min),
+            width,
+            height,
+            fill=False,
+            edgecolor="tab:blue",
+            linewidth=1.2,
+            alpha=0.7,
+            zorder=1,
+        )
+        ax.add_patch(rect)
+
+    # -------------------------
+    # Plot rollout clouds at selected times
+    # xs has shape (n_rollouts, T_steps, n)
+    # -------------------------
+    cloud_times = [t for t in cloud_times if 0 <= t < xs.shape[1]]
+
+    markers = ["o", "s", "^", "D", "x", "*"]
+    colors = ["tab:red", "tab:green", "tab:orange", "tab:purple", "tab:brown", "tab:pink"]
+
+    for idx, t in enumerate(cloud_times):
+        ax.scatter(
+            xs[:, t, 0],   # object x
+            xs[:, t, 1],   # object y
+            s=28,
+            marker=markers[idx % len(markers)],
+            color=colors[idx % len(colors)],
+            alpha=0.75,
+            label=fr"Rollout cloud at $t={t}$",
+            zorder=4,
+        )
+
+    # start / end markers
+    ax.scatter(
+        X_pred[0, 0], X_pred[0, 1],
+        color="black", s=60, marker="o", zorder=5, label="Start"
+    )
+    ax.scatter(
+        X_pred[-1, 0], X_pred[-1, 1],
+        color="black", s=70, marker="*", zorder=5, label="End"
+    )
+
+    ax.set_xlabel("Object x")
+    ax.set_ylabel("Object y")
+    ax.set_title("Tube boxes with rollout clouds")
+    ax.set_aspect("equal", adjustable="box")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best", fontsize=10)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
 
 def visualize_x_sequence(env, xs, gif_path="output/x_rollout.gif", fps=10, has_pusher=True, scale=100):
     """
@@ -261,7 +380,7 @@ def main(config: DictConfig):
         rti=False,
         enable_linearization_bounds=True,
         enable_linearization_gradients=True,
-        lambda_rem=32.0
+        lambda_rem=0.0
     )
 
     sqp_cfg = SQPConfig(
@@ -297,6 +416,8 @@ def main(config: DictConfig):
     # R_single = jnp.diag(jnp.array([0.01, 0.01]))
     # R_bar = jnp.broadcast_to(R_single, (horizon, nu, nu))
 
+    disturbance_center = jnp.full((horizon + 1, n), 0.0)
+
     controller = GenericMPC(
         sls_cfg,
         sqp_cfg,
@@ -305,6 +426,7 @@ def main(config: DictConfig):
         dynamics=dynamics,
         constraints=constraints,
         obstacles=obstacles,
+        disturbance_center=disturbance_center,
         cost=cost,
         Q_bar=Q_bar,
         R_bar=R_bar,
@@ -456,9 +578,19 @@ def main(config: DictConfig):
 
     tube = get_trajectory_tubes(Phi_x, EN)
     tube_center_shift = jnp.einsum("kjxn,jn->kx", Phi_x, r_centerN)
-    shift = np.asarray(tube_center_shift)    
+    shift = np.asarray(tube_center_shift)
     lower = X_pred - tube + shift
     upper = X_pred + tube + shift
+
+    plot_tubes_and_rollout_cloud(
+        X_pred=np.asarray(X_pred),
+        lower=np.asarray(lower),
+        upper=np.asarray(upper),
+        xs=np.asarray(xs),
+        save_path="visualizations/tubes_rollout_cloud.png",
+        cloud_times=(0, 5, 9),
+        has_pusher=True,
+    )
 
     plot_tube_graph(
         disturbed,
@@ -468,6 +600,62 @@ def main(config: DictConfig):
         output_folder=os.getcwd(),
         filename="disturbance_vs_tube_size.png",
     )
+
+    save_npz_path = os.path.join(out_dir, "tube_graph_bundle.npz")
+    np.savez(
+        save_npz_path,
+
+        # core rollout data
+        xs=np.asarray(xs),                         # (n_rollouts, T, n)
+        disturbed=np.asarray(disturbed),           # abs rollout values used by plot_tube_graph
+        stop_steps=np.asarray(stop_steps),
+
+        # nominal MPC outputs
+        z_cur=np.asarray(z_cur),
+        reference=np.asarray(reference),
+        u0=np.asarray(u0),
+        X_pred=np.asarray(X_pred),                 # (N+1, n)
+        U_pred=np.asarray(U_pred),                 # (N, nu)
+        V=np.asarray(V),
+        backoffs=np.asarray(backoffs),
+
+        # tube / SLS quantities
+        Phi_x=np.asarray(Phi_x),
+        Phi_u=np.asarray(Phi_u),
+        EN=np.asarray(EN),
+        r_centerN=np.asarray(r_centerN),
+        tube=np.asarray(tube),
+        shift=np.asarray(shift),
+        lower=np.asarray(lower),
+        upper=np.asarray(upper),
+
+        # disturbance / model info
+        E_sim=np.asarray(E_sim),
+        disturbance_center=np.asarray(disturbance_center),
+
+        # problem metadata
+        dt=np.array(dt),
+        horizon=np.array(horizon),
+        n=np.array(n),
+        nu=np.array(nu),
+        T_dim=np.array(T_dim),
+        action_dim=np.array(action_dim),
+        Y_MIN=np.array(Y_MIN),
+        X_MAX=np.array(X_MAX),
+
+        # environment / case reconstruction info
+        init_pusher_pos=np.asarray(init_pusher_pos),
+        init_pose=np.asarray(init_pose),
+        target_pose=np.asarray(target_pose),
+        obstacles=np.asarray(obstacles),
+
+        # optional plotting metadata
+        cloud_times=np.asarray([0, 5, 9]),
+        has_pusher=np.array(True),
+        scale=np.array(scale),
+    )
+
+    print(f"Saved visualization bundle to: {save_npz_path}")
 
     env.close()
 

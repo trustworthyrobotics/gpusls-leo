@@ -149,25 +149,62 @@ def add_obstacle_constraints(C: jnp.ndarray, D: jnp.ndarray, f: jnp.ndarray,
     
     return C_all, D_all, f_all
 
-def merit_function_factory(rho_merit, lambda_rem, remainder_func, eps_rem):
-    def merit_fn(V, g, c, X, U, Phi_x_prev, Phi_u_prev, r_center_prev):
+def merit_function_factory(rho_merit, lambda_rem, remainder_func, eps_rem, disturbance):
+    @partial(jax.jit, static_argnames=("remainder_func", "disturbance"))
+    def merit_fn(V, g, c, X, U, Phi_x_prev, Phi_u_prev, r_center_prev,
+                 remainder_func=remainder_func, disturbance=disturbance):
         T = U.shape[0]
         nu = U.shape[1]
         t = jnp.arange(T + 1, dtype=X.dtype)[:, None]
         t_width = jnp.zeros_like(t)
+
         tube_center_shift_x = jnp.einsum("kjxn,jn->kx", Phi_x_prev, r_center_prev)
         tube_center_shift_u = jnp.einsum("kjun,jn->ku", Phi_u_prev, r_center_prev)
         tube_center_shift_u_pad = jnp.concatenate(
             [tube_center_shift_u, jnp.zeros((1, nu), dtype=tube_center_shift_u.dtype)],
             axis=0
         )
-        tube_center_shift = jnp.concatenate([tube_center_shift_x, tube_center_shift_u_pad, jnp.zeros_like(t_width)], axis=-1)
-        r = remainder_penalty(X, U, eps_rem, tube_center_shift, remainder_func)
+        tube_center_shift = jnp.concatenate(
+            [tube_center_shift_x, tube_center_shift_u_pad, jnp.zeros_like(t_width)],
+            axis=-1,
+        )
+
+        r = remainder_penalty(
+            X, U, eps_rem, tube_center_shift,
+            remainder_func, disturbance, Phi_x_prev, Phi_u_prev
+        )
         return g + jnp.sum(V * c) + 0.5 * rho_merit * jnp.sum(c * c) + lambda_rem * r
+        # return g + jnp.sum(V * c) + 0.5 * rho_merit * jnp.sum(c * c)
     return merit_fn
 
-@partial(jax.jit, static_argnames=("remainder_func",))
-def remainder_penalty(X_, U_, eps_, tube_center_shift, remainder_func):
+def get_tube_width(Phi_x, Phi_u, E):
+    # Phi_x: [T+1, T+1, nx, nw]
+    # Phi_u: [T,   T+1, nu, nw]
+    # E:     [T+1, nw, ne]
+
+    Phi_x_E = jnp.einsum("kjxn,jne->kjxe", Phi_x, E)   # [T+1, T+1, nx, ne]
+    Phi_u_E = jnp.einsum("kjun,jne->kjue", Phi_u, E)   # [T,   T+1, nu, ne]
+
+    x_width = jnp.linalg.norm(Phi_x_E, ord=1, axis=-1).sum(axis=1)
+    u_width = jnp.linalg.norm(Phi_u_E, ord=1, axis=-1).sum(axis=1)
+
+    return x_width, u_width
+
+def get_tube_width_surrogate(Phi_x, Phi_u, E):
+    # Phi_x: [T+1, T+1, nx, nw]
+    # Phi_u: [T,   T+1, nu, nw]
+    # E:     [T+1, nw, ne]
+
+    Phi_x_E = jnp.einsum("kjxn,jne->kjxe", Phi_x, E)   # [T+1, T+1, nx, ne]
+    Phi_u_E = jnp.einsum("kjun,jne->kjue", Phi_u, E)   # [T,   T+1, nu, ne]
+    eps = 1e-6
+    x_width = jnp.sqrt(jnp.sum(Phi_x_E**2, axis=-1) + eps).sum(axis=1)
+    u_width = jnp.sqrt(jnp.sum(Phi_u_E**2, axis=-1) + eps).sum(axis=1)
+
+    return x_width, u_width
+
+@partial(jax.jit, static_argnames=("remainder_func", "disturbance"))
+def remainder_penalty(X_, U_, eps_, tube_center_shift, remainder_func, disturbance, Phi_x, Phi_u):
     T = U_.shape[0]
     t = jnp.arange(T + 1, dtype=X_.dtype)[:, None]
     U_pad_ = jnp.pad(U_, ((0, 1), (0, 0)))
@@ -175,14 +212,18 @@ def remainder_penalty(X_, U_, eps_, tube_center_shift, remainder_func):
     z_lo_ = z_nom_ - eps_ + tube_center_shift
     z_up_ = z_nom_ + eps_ + tube_center_shift
 
-    x_lower, x_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo_, z_up_)
+    r_lower, r_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo_, z_up_)
+    r_radius = 0.5 * (r_upper - r_lower)
+    diag_r = jax.vmap(jnp.diag)(r_radius)
+    E = disturbance(X_)
+    E_combined = jnp.concatenate([E, diag_r], axis=2)
+    x_width, u_width = get_tube_width_surrogate(Phi_x, Phi_u, E_combined)
+    # return jnp.sum(E_combined)
+    return jnp.sum(x_width) + jnp.sum(u_width)
 
-    x_radius = 0.5 * (x_upper - x_lower)
-    return jnp.sum(x_radius)
 
-
-@partial(jax.jit, static_argnames=("remainder_func",))
-def get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func):
+@partial(jax.jit, static_argnames=("remainder_func", "disturbance"))
+def get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func, disturbance):
     T = U.shape[0]
     nu = U.shape[1]
     t = jnp.arange(T + 1, dtype=X.dtype)[:, None]
@@ -204,7 +245,7 @@ def get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev,
     _, (grad_X_rem, grad_U_rem) = jax.value_and_grad(
         remainder_penalty,
         argnums=(0, 1)
-    )(X, U, z_width, tube_center_shift, remainder_func)
+    )(X, U, z_width, tube_center_shift, remainder_func, disturbance, Phi_x_prev, Phi_u_prev)
     grad_X_rem = grad_X_rem.at[0].set(0.0)
     return grad_X_rem, grad_U_rem
 
@@ -241,15 +282,19 @@ def compute_search_direction(
     q, r_pad = linearizer(X, pad(U), jnp.arange(T + 1), pad(V[1:]), V)
     r = r_pad[:-1]
     if sls_config.enable_linearization_gradients:
-        grad_X_rem, grad_U_rem = get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func)
+        grad_X_rem, grad_U_rem = get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func, disturbance)
         t = sqp_iteration / jnp.maximum(
             sls_config.max_initial_sqp_iterations + sqp_config.max_sqp_iterations - 1,
             1,
         )
         decay = jnp.maximum(0.01, (1.0 - t) ** 2)
         weight = sls_config.lambda_rem * decay
+        # jax.debug.print("{}", grad_X_rem)
         q = q + weight * grad_X_rem
         r = r + weight * grad_U_rem
+
+    # jax.debug.print("q: {}", q)
+
 
     A_pad, B_pad = dynamics_linearizer(X, pad(U), jnp.arange(T + 1))
     A = A_pad[:-1]
@@ -381,11 +426,15 @@ def sqp(
                 sls_config.lambda_rem,
                 remainder_func,
                 z_width,
+                disturbance
             )
             current_merit = merit_fn(V_curr, g, c, X_curr, U_curr, Phi_x1, Phi_u1, r_center_prev)
             merit_slope = slope(dX, dU, dV, c, q, r, rho_merit)
-            last_iter = (i >= (sqp_config.max_sqp_iterations + sls_config.max_initial_sqp_iterations - 3))
-            do_ls = jnp.logical_and(jnp.logical_and(jnp.array(bool(sqp_config.line_search)), jnp.logical_not(last_iter)), jnp.logical_not(converged1))
+            last_iter = (i >= (sqp_config.max_sqp_iterations + sls_config.max_initial_sqp_iterations + 3))
+            use_line_search = jnp.logical_and(
+                jnp.logical_and(jnp.array(bool(sqp_config.line_search)), jnp.logical_not(last_iter)),
+                jnp.logical_not(converged1),
+            )
 
             def ls_branch(_):
                 Xn, Un, Vn, g_new, c_new, ok = line_search(
@@ -398,18 +447,29 @@ def sqp(
                     alpha_0=1.0,
                     alpha_mult=0.5,
                     alpha_min=1e-6,
-                    Phi_x_prev=Phi_x1, Phi_u_prev=Phi_u1, r_center_prev=r_center_prev, 
+                    Phi_x_prev=Phi_x1, Phi_u_prev=Phi_u1, r_center_prev=r_center_prev,
                 )
                 return Xn, Un, Vn
 
             def fullstep_branch(_):
-                return (X_curr + dX, U_curr + dU, V_curr + dV)
+                return X_curr + dX, U_curr + dU, V_curr + dV
 
-            X_next, U_next, V_next = lax.cond(do_ls, ls_branch, fullstep_branch, operand=None)
+            # If converged1 is true, force alpha = 1 by skipping line search.
+            X_next, U_next, V_next = lax.cond(
+                converged1,
+                fullstep_branch,
+                lambda _: lax.cond(use_line_search, ls_branch, fullstep_branch, operand=None),
+                operand=None,
+            )
 
             w_next = w1
             y_next = y1
-            rho_next = jnp.maximum(rho1, admm_config.initial_rho)
+            # rho_next = jnp.where(
+            #     rho1 > admm_config.initial_rho,
+            #     jnp.maximum(rho1 * 0.9, admm_config.initial_rho),
+            #     rho1
+            # )
+            rho_next = rho1
             y_next = rho1 / rho_next * y_next
             backoffs_next = backoffs1
             Phi_x_next = Phi_x1
@@ -437,6 +497,11 @@ def sqp(
             # y_next = lax.select(converged1, y, y1)
             # rho_next = lax.select(converged1, rho, rho1)
             # rho_next = jnp.minimum(rho, admm_config.initial_rho)
+            # rho_next = jnp.where(
+            #     rho > admm_config.initial_rho,
+            #     jnp.maximum(rho * 0.9, admm_config.initial_rho),
+            #     rho
+            # )
             # y_next = rho / rho_next * y_next
             # backoffs_next = lax.select(converged1, backoffs, backoffs1)
             # Phi_x_next = lax.select(converged1, Phi_x, Phi_x1)

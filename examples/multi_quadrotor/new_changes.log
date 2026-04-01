@@ -1,0 +1,97 @@
+W0401 16:04:29.621385   15483 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+W0401 16:04:29.623037   15379 cuda_executor.cc:1802] GPU interconnect information not available: INTERNAL: NVML doesn't support extracting fabric info or NVLink is not used by the device.
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:404: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  W_single = jnp.array([
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:413: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  u_ref_single = jnp.array([MASS * GRAVITY, 0.0, 0.0, 0.0], dtype=jnp.float64)
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:434: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  u_min_single = jnp.array([0.0, -tau_max, -tau_max, -tau_max], dtype=jnp.float64)
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:435: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  u_max_single = jnp.array([T_max, tau_max, tau_max, tau_max], dtype=jnp.float64)
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:445: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  x_max_single = jnp.array([
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:463: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  obstacles = jnp.array([
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:485: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  x0_quads = jnp.array([
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:493: UserWarning: Explicitly requested dtype float64 requested in array is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  xg_quads = jnp.array([
+/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py:234: UserWarning: Explicitly requested dtype float64 requested in zeros is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  Xi = jnp.zeros((horizon + 1, SINGLE_N), dtype=jnp.float64)
+/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/numpy/lax_numpy.py:5805: UserWarning: Explicitly requested dtype float64 requested in eye is not available, and will be truncated to dtype float32. To enable more dtypes, set the jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell environment variable. See https://github.com/jax-ml/jax#current-gotchas for more.
+  output = _eye(N, M=M, k=k, dtype=dtype)
+Traceback (most recent call last):
+  File "/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py", line 707, in <module>
+    main()
+  File "/home/jeff/trustworthroboticsgroup/gpu_sls/examples/multi_quadrotor/multi_quadrotor.py", line 559, in main
+    Q_bar = Q_bar.at[-5:].set(Q_term)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/numpy/array_methods.py", line 858, in set
+    return scatter._scatter_update(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/ops/scatter.py", line 92, in _scatter_update
+    return internal_scatter(x, y, dynamic_idx)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/ops/scatter.py", line 127, in _scatter_impl
+    y = jnp.broadcast_to(y, tuple(indexer.slice_shape),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/numpy/lax_numpy.py", line 3070, in broadcast_to
+    return util._broadcast_to(array, shape, sharding=out_sharding)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/numpy/util.py", line 285, in _broadcast_to
+    return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))),
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/lax/lax.py", line 2757, in broadcast_in_dim
+    return broadcast_in_dim_p.bind(
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/core.py", line 632, in bind
+    return self._true_bind(*args, **params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/core.py", line 648, in _true_bind
+    return self.bind_with_trace(prev_trace, args, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/core.py", line 660, in bind_with_trace
+    return trace.process_primitive(self, args, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/core.py", line 1189, in process_primitive
+    return primitive.impl(*args, **params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/dispatch.py", line 92, in apply_primitive
+    outs = fun(*args)
+           ^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/traceback_util.py", line 195, in reraise_with_filtered_traceback
+    return fun(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/pjit.py", line 264, in cache_miss
+    executable, pgle_profiler, const_args) = _python_pjit_helper(
+                                             ^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/pjit.py", line 146, in _python_pjit_helper
+    out_flat, compiled, profiler, const_args = _pjit_call_impl_python(
+                                               ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/pjit.py", line 1610, in _pjit_call_impl_python
+    computation = _resolve_and_lower(
+                  ^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/pjit.py", line 1536, in _resolve_and_lower
+    return _pjit_lower(
+           ^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/pjit.py", line 1716, in _pjit_lower
+    return pxla.lower_sharding_computation(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/profiler.py", line 359, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py", line 2411, in lower_sharding_computation
+    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/interpreters/pxla.py", line 2007, in _cached_lowering_to_hlo
+    lowering_result = mlir.lower_jaxpr_to_module(
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py", line 1302, in lower_jaxpr_to_module
+    ctx = ModuleContext(backend=backend,
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py", line 734, in __init__
+    self.context = context or make_ir_context()
+                              ^^^^^^^^^^^^^^^^^
+  File "/home/jeff/miniconda3/envs/gpusls_lin/lib/python3.11/site-packages/jax/_src/interpreters/mlir.py", line 559, in make_ir_context
+    context.load_all_available_dialects()
+KeyboardInterrupt
