@@ -586,10 +586,8 @@ def main(config: DictConfig):
     tube = get_trajectory_tubes(Phi_x, EN)
     tube_center_shift = jnp.einsum("kjxn,jn->kx", Phi_x, r_centerN)
     shift = np.asarray(tube_center_shift)
-    # Protect against floatpoint errors
-    eps = 5e-3
-    lower = X_pred - tube + shift - eps
-    upper = X_pred + tube + shift + eps
+    lower = X_pred - tube + shift
+    upper = X_pred + tube + shift
 
     plot_tubes_and_rollout_cloud(
         X_pred=np.asarray(X_pred),

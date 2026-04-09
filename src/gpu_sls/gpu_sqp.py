@@ -14,6 +14,7 @@ from gpu_sls.external.primal_dual_ilqr.primal_dual_ilqr.optimizers import (
 )
 from gpu_sls.gpu_admm import ADMMConfig, constrained_solve
 from gpu_sls.gpu_sls import SLSConfig, sls_solve_gpu, get_tube_width
+from gpu_sls.osqp_admm import constrained_solve_osqp
 
 
 @partial(jit, static_argnums=(0, 1))
@@ -109,7 +110,6 @@ class SQPConfig:
     def tree_unflatten(cls, aux, children):
         return cls(*children)
 
-# TODO: Add constraints to this?
 def lagrangian(cost, dynamics, x0):
     def fun(x, u, t, v, v_prev):
         c1 = cost(x, u, t)
@@ -312,9 +312,18 @@ def compute_search_direction(
     n_obs = obstacles.shape[0]
 
     def run_nominal(_):
-        dX, dU, dV, w1, y1, rho1, _, converged_admm = constrained_solve(
-            admm_config, Q, q, R, r, M, A, B, c, C_all, D_all, f_all, w, y, rho
-        )
+        if admm_config.use_oqsp:
+            dX, dU, dV = constrained_solve_osqp(
+                Q, q, R, r, M, A, B, c, C_all, D_all, f_all
+            )
+            backoffs = jnp.zeros((T + 1, nc - obstacles.shape[0]))
+            Phi_x = jnp.zeros((T + 1, T + 1, nx, nx))
+            Phi_u = jnp.zeros((T, T + 1, nu, nx))
+            rho1 = jnp.zeros_like(rho)
+        else:
+            dX, dU, dV, w1, y1, rho1, _, converged_admm = constrained_solve(
+                admm_config, Q, q, R, r, M, A, B, c, C_all, D_all, f_all, w, y, rho
+            )
         backoffs = jnp.zeros((T + 1, nc - n_obs))
         Phi_x   = jnp.zeros((T + 1, T + 1, nx, nx))
         Phi_u   = jnp.zeros((T, T + 1, nu, nx))

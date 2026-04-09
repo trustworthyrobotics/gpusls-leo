@@ -335,7 +335,7 @@ def main():
         enable_fastsls=True,
         initialize_nominal=True,
         max_initial_sqp_iterations=100,
-        warm_start=True,
+        warm_start=False,
         rti=False,
         enable_linearization_bounds=True,
         enable_linearization_gradients=False,
@@ -347,7 +347,7 @@ def main():
         warm_start=False,
         feas_tol=0.01,
         step_tol=0.0001,
-        line_search=True,
+        line_search=False,
     )
 
     disturbance_center = jnp.full((N + 1, n), 0.0)

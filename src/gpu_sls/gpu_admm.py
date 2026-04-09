@@ -30,6 +30,7 @@ class ADMMConfig:
     eps_rel: float = 1e-2
     rho_max: int = 1e5
     initial_rho: int = 1.0
+    use_oqsp: bool = False
 
     def tree_flatten(self):
         children = (self.rho_update_frequency, self.max_iterations, self.eps_abs, self.eps_rel, self.rho_max, self.initial_rho)

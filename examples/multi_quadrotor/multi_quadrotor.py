@@ -76,6 +76,38 @@ def reshape_control(u: jnp.ndarray) -> jnp.ndarray:
     return u.reshape(N_QUADS, SINGLE_NU)
 
 
+# def single_quad_derivative(xi: jnp.ndarray, ui: jnp.ndarray) -> jnp.ndarray:
+#     px, py, pz, phi, theta, psi, vx, vy, vz, p, q, r = xi
+#     T, tau_phi, tau_theta, tau_psi = ui
+
+#     cphi, sphi = jnp.cos(phi), jnp.sin(phi)
+#     cth, sth = jnp.cos(theta), jnp.sin(theta)
+#     cpsi, spsi = jnp.cos(psi), jnp.sin(psi)
+#     tth = jnp.tan(theta)
+
+#     dpx = vx
+#     dpy = vy
+#     dpz = vz
+
+#     dphi = p + q * sphi * tth + r * cphi * tth
+#     dtheta = q * cphi - r * sphi
+#     dpsi = q * sphi / cth + r * cphi / cth
+
+#     dvx = (T / MASS) * (cpsi * sth * cphi + spsi * sphi)
+#     dvy = (T / MASS) * (spsi * sth * cphi - cpsi * sphi)
+#     dvz = (T / MASS) * (cth * cphi) - GRAVITY
+
+#     dp = ((JY - JZ) / JX) * q * r + tau_phi / JX
+#     dq = ((JZ - JX) / JY) * p * r + tau_theta / JY
+#     dr = ((JX - JY) / JZ) * p * q + tau_psi / JZ
+
+#     return jnp.array([
+#         dpx, dpy, dpz,
+#         dphi, dtheta, dpsi,
+#         dvx, dvy, dvz,
+#         dp, dq, dr,
+#     ], dtype=xi.dtype)
+
 def single_quad_derivative(xi: jnp.ndarray, ui: jnp.ndarray) -> jnp.ndarray:
     px, py, pz, phi, theta, psi, vx, vy, vz, p, q, r = xi
     T, tau_phi, tau_theta, tau_psi = ui
@@ -83,15 +115,17 @@ def single_quad_derivative(xi: jnp.ndarray, ui: jnp.ndarray) -> jnp.ndarray:
     cphi, sphi = jnp.cos(phi), jnp.sin(phi)
     cth, sth = jnp.cos(theta), jnp.sin(theta)
     cpsi, spsi = jnp.cos(psi), jnp.sin(psi)
-    tth = jnp.tan(theta)
+
+    inv_cth = 1.0 / cth
+    tth = sth * inv_cth
 
     dpx = vx
     dpy = vy
     dpz = vz
 
-    dphi = p + q * sphi * tth + r * cphi * tth
+    dphi = p + (q * sphi + r * cphi) * tth
     dtheta = q * cphi - r * sphi
-    dpsi = q * sphi / cth + r * cphi / cth
+    dpsi = (q * sphi + r * cphi) * inv_cth
 
     dvx = (T / MASS) * (cpsi * sth * cphi + spsi * sphi)
     dvy = (T / MASS) * (spsi * sth * cphi - cpsi * sphi)
@@ -141,7 +175,15 @@ def multi_quad_dynamics(
 
     accel_coupling = coupling_pos + coupling_vel
 
-    dxq = dxq.at[:, 6:9].add(accel_coupling)
+    # dxq = dxq.at[:, 6:9].add(accel_coupling)
+    dxq = jnp.concatenate(
+    [
+        dxq[:, :6],
+        dxq[:, 6:9] + accel_coupling,
+        dxq[:, 9:],
+    ],
+    axis=1,
+)
 
     return (xq + dt * dxq).reshape(-1)
 
@@ -425,8 +467,8 @@ def main():
     # Control limits
     # -----------------------------
     T_hover = MASS * GRAVITY
-    T_max = 3.0 * T_hover
-    tau_max = 10.0
+    T_max = 30000.0 * T_hover
+    tau_max = 1000.0
 
     u_min_single = jnp.array([0.0, -tau_max, -tau_max, -tau_max], dtype=jnp.float64)
     u_max_single = jnp.array([T_max, tau_max, tau_max, tau_max], dtype=jnp.float64)
@@ -458,21 +500,23 @@ def main():
     # One circular obstacle per quad in XY projection, repeated in constraints interface.
     # -----------------------------
     obstacles = jnp.array([
-        [0.0, 0.3, 0.35],
-        [0.5, -0.5, 0.3],
+        # [0.0, 0.3, 0.35],
+        # [0.5, -0.5, 0.3],
     ], dtype=jnp.float64)
 
 
     constraints_x = make_state_box_constraints(x_min, x_max)
-    obstacle_constraints = make_multi_quad_circle_obstacle_constraints(obstacles, N_QUADS)
-    constraints_all = combine_constraints(constraints_x, constraints_u)
-    constraints_all = combine_constraints(constraints_all, obstacle_constraints)
+    # obstacle_constraints = make_multi_quad_circle_obstacle_constraints(obstacles, N_QUADS)
+    # constraints_all = combine_constraints(constraints_x, constraints_u)
+    # constraints_all = combine_constraints(constraints_all, obstacle_constraints)
+    constraints_all = make_control_box_constraints(u_min, u_max)
 
     n_obs = obstacles.shape[0]
-    nc = 2 * NU + 2 * N + n_obs * N_QUADS
+    # nc = 2 * NU + 2 * N + n_obs * N_QUADS
     # nc = 2 * NU + 2 * N
+    nc = 2 * NU
 
-    E_mag = 0.06
+    E_mag = 0.02
     alpha_sim = E_mag * dt
     disturbance = make_constant_disturbance(n=N, alpha=alpha_sim)
 
@@ -508,7 +552,7 @@ def main():
     # Solver configs
     # -----------------------------
     admm_cfg = ADMMConfig(
-        eps_abs=5e-2,
+        eps_abs=1e-1,
         eps_rel=1e-4,
         rho_max=5e1,
         max_iterations=400,
@@ -572,6 +616,7 @@ def main():
         num_constraints=nc,
         disturbance=disturbance,
         shift=1,
+        use_taylor_model=True,
         X_in=jnp.zeros((cfg.N + 1, cfg.n), dtype=jnp.float64),
         U_in=jnp.zeros((cfg.N, cfg.nu), dtype=jnp.float64).at[:, 0::4].set(T_hover),
     )
@@ -655,17 +700,17 @@ def main():
     )
     tube = get_trajectory_tubes(Phi_x, E_prev)
 
-    # plot_tube_graph_multiquadrotor(
-    #     disturbed=disturbed,
-    #     X_pred=X_pred,
-    #     Phi_x=Phi_x,
-    #     r_centerN=r_centerN,
-    #     tube=tube,
-    #     dt=dt,
-    #     N_QUADS=N_QUADS,
-    #     SINGLE_N=SINGLE_N,
-    #     filename="multi_quadrotor_disturbance_vs_tube_size.png",
-    # )
+    plot_tube_graph_multiquadrotor(
+        disturbed=disturbed,
+        X_pred=X_pred,
+        Phi_x=Phi_x,
+        r_centerN=r_centerN,
+        tube=tube,
+        dt=dt,
+        N_QUADS=N_QUADS,
+        SINGLE_N=SINGLE_N,
+        filename="multi_quadrotor_disturbance_vs_tube_size.png",
+    )
     # # -----------------------------
     # # Visualize first quad only in XY
     # # -----------------------------

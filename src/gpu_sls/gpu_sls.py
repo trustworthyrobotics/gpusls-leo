@@ -10,9 +10,9 @@ from jax import jit, lax, vmap
 
 from gpu_sls.gpu_admm import constrained_solve
 from gpu_sls.external.primal_dual_ilqr.primal_dual_ilqr.primal_tvlqr import tvlqr_gpu
-from gpu_sls.external.linearization_sls.src.helper import make_step_boxes, build_linear_tm, prepare_initial_set
-from gpu_sls.external.linearization_sls.src.taylor_model import LinTM
-
+# from gpu_sls.external.linearization_sls.src.helper import make_step_boxes, build_linear_tm, prepare_initial_set
+# from gpu_sls.external.linearization_sls.src.taylor_model import LinTM
+from gpu_sls.external.linearization_sls_temp.test_taylor import estimate_remainder_TM
 
 @dataclass(frozen=True)
 class SLSConfig:
@@ -384,13 +384,19 @@ def get_combined_disturbance(
     z_lo = z_center + z_width_lower
     z_up = z_center + z_width_upper
     r_bound_lower, r_bound_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo, z_up)   # [T+1, nx]
+    # r_bound_lower, r_bound_upper = remainder_func(z_lo, z_up)
+    # print("r_bound_lower shape:", r_bound_lower.shape)
+    # print("r_bound_upper shape:", r_bound_upper.shape)
+    # print("r_radius shape:", r_radius.shape)
     r_center = (r_bound_lower + r_bound_upper) / 2
     r_radius = (r_bound_upper - r_bound_lower) / 2
     # jax.debug.print("Z_width lowr: {} z_width_upper: {}", z_width_lower, z_width_upper)
-    jax.debug.print(
-        "Nonzeros: {}",
-        jnp.sum(r_radius != 0)
-    )
+    # jax.debug.print("R_RADIUS max: {}", jnp.max(r_radius))
+    # jax.debug.print("R_RADIUS mean: {}", jnp.mean(r_radius))
+    # jax.debug.print(
+    #     "Nonzeros: {}",
+    #     jnp.sum(r_radius != 0)
+    # )
     diag_r = jax.vmap(jnp.diag)(r_radius)                              # [T+1, nx, nx]
 
     E_combined = jnp.concatenate([E, diag_r], axis=2)                # [T+1, nx, 2nx]
