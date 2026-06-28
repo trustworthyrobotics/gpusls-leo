@@ -1,9 +1,0 @@
-name: gpu_sls_leo
-
-channels:
- - conda-forge
- - nvidia
-
-dependencies:
- - python=3.11
- - pip
