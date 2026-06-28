@@ -7,6 +7,23 @@ import numpy as np
 import hydra
 from omegaconf import DictConfig, OmegaConf, open_dict
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+LINEARIZATION_ERROR = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "linearization_error"
+)
+CROWN_REACH = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "ReachDev", "CROWN_Reach"
+)
+
+REACH_DEV = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "ReachDev"
+)
+
+sys.path.insert(0, LINEARIZATION_ERROR)
+sys.path.insert(0, CROWN_REACH)
+sys.path.insert(0, REACH_DEV)
+
+
 import jax
 jax.config.update("jax_default_matmul_precision", "highest")
 jax.config.update("jax_enable_x64", True)
@@ -380,6 +397,7 @@ def main(config: DictConfig):
         rti=False,
         enable_linearization_bounds=True,
         enable_linearization_gradients=True,
+        remainder_uses_time=False,
         lambda_rem=0.0
     )
 

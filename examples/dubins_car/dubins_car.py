@@ -1,9 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
 from typing import Any, Callable
+import sys
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+LINEARIZATION_ERROR = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "linearization_error"
+)
+
+sys.path.insert(0, LINEARIZATION_ERROR)
 
 import jax
 import jax.numpy as jnp
@@ -31,11 +37,6 @@ config.update(
 # -----------------------------
 # Goal stopping config
 # -----------------------------
-GOAL_TOL = 0.2  # meters (XY distance)
-
-def reached_goal_xy(x: jnp.ndarray, x_goal: jnp.ndarray, tol: float = GOAL_TOL) -> jnp.bool_:
-    dxy = x[:2] - x_goal[:2]
-    return (dxy @ dxy) <= (tol * tol)
 
 
 # -----------------------------
@@ -140,8 +141,9 @@ def dubins_step_with_disturbance(
         w = jnp.array([-0.577, -0.577, -0.577], dtype=x.dtype)
 
     # Additive disturbance
-    x_next = x_nom + E @ w
-    return key, x_next, w
+    injected_disturbance = (E @ w)
+    x_next = x_nom + injected_disturbance
+    return key, x_next, injected_disturbance
 
 def dynamics(x: jnp.ndarray, u: jnp.ndarray, t: jnp.ndarray, *, parameter: Any) -> jnp.ndarray:
     """Discrete-time dynamics required by your model evaluator."""
@@ -223,6 +225,10 @@ def make_constant_disturbance(
 
     return disturbance
 
+def make_straight_line_reference(x0, x_goal, N):
+    t = jnp.linspace(0.0, 1.0, N + 1)[:, None]   # (N+1, 1)
+    return x0[None, :] + t * (x_goal - x0)[None, :]
+
 # -----------------------------
 # Main experiment
 # -----------------------------
@@ -249,7 +255,7 @@ def main():
 
     parameter = dt
 
-    om_max = 100.0
+    om_max = 500.0
     u_min = jnp.array([-om_max], dtype=jnp.float64)
     u_max = jnp.array([om_max], dtype=jnp.float64)
 
@@ -272,7 +278,7 @@ def main():
     x0 = jnp.array([-0.75, -0.75, 0.0], dtype=jnp.float64)
     x_goal = jnp.array([1.0, 0.6, 0.0], dtype=jnp.float64)
 
-    X_ref = jnp.tile(x_goal[None, :], (N + 1, 1))
+    X_ref = make_straight_line_reference(x0, x_goal, N)
     reference = X_ref
     T_steps = N
 
@@ -284,29 +290,29 @@ def main():
     # -----------------------------
     admm_cfg = ADMMConfig(
         eps_abs=1e-2,
-        eps_rel=0,
+        eps_rel=1e-3,
         rho_max=1e5,
         max_iterations=1000,
         rho_update_frequency=25,
-        initial_rho=30.0
+        initial_rho=2.0
     )
 
     sls_cfg = SLSConfig(
         max_sls_iterations=2,
         sls_primal_tol=1e-2,
         enable_fastsls=True,
-        initialize_nominal=True,
+        initialize_nominal=False,
         max_initial_sqp_iterations=100,
         warm_start=False,
         rti=False,
-        enable_linearization_bounds=False,
+        enable_linearization_bounds=True,
     )
 
     sqp_cfg = SQPConfig(
         max_sqp_iterations=100,
         warm_start=False,
-        feas_tol=0.01,
-        step_tol=0.0001,
+        feas_tol=1e-2,
+        step_tol=1e-8,
         line_search=True
     )
 
@@ -317,12 +323,15 @@ def main():
     # Q_bar = jnp.broadcast_to(Q, (N + 1, n, n))
     # R_bar = jnp.broadcast_to(R, (N, nu, nu))
 
+    disturbance_center = jnp.zeros((N + 1, n))
+
     controller = GenericMPC(
         sls_cfg,
         sqp_cfg,
         admm_cfg,
         config=cfg,
         dynamics=dynamics,
+        disturbance_center=disturbance_center,
         constraints=constraints_all,
         obstacles=obstacles,
         cost=cost,
@@ -331,31 +340,29 @@ def main():
         num_constraints=nc,
         disturbance=disturbance,
         shift=1,
-        X_in=jnp.zeros((cfg.N + 1, cfg.n), dtype=jnp.float64),
+        # X_in=jnp.zeros((cfg.N + 1, cfg.n), dtype=jnp.float64),
+        X_in=X_ref,
         U_in=jnp.zeros((cfg.N, cfg.nu), dtype=jnp.float64),
     )
 
     # robust plan (single call in your script)
     N_ROLLOUTS = NUM_RANDOM + NUM_ADV
-    u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, EN = controller.run(
+    u0, X_pred, U_pred, V_pred, backoffs, Phi_x, Phi_u, EN, r_centerN = controller.run(
         x0=x0, reference=reference, parameter=parameter
     )
-
+    jax.debug.print("{}", r_centerN)
     # -----------------------------
     # Rollout simulations with early stopping
     # -----------------------------
     xs = np.full((N_ROLLOUTS, T_steps, 3), np.nan, dtype=np.float64)
     disturbed = np.full((N_ROLLOUTS, T_steps, 3), np.nan, dtype=np.float64)
-    stop_steps = np.full((N_ROLLOUTS,), T_steps, dtype=np.int32)
 
     for i in range(N_ROLLOUTS):
         disturbance_history = [jnp.zeros((n,), dtype=jnp.float64)]
         x = x0
-        jax.debug.print(f"Rolling out iteration {i}")
+        jax.debug.print("Rolling out iteration {}", i)
+
         for k in range(T_steps):
-            if bool(reached_goal_xy(x, x_goal, GOAL_TOL)):
-                stop_steps[i] = k
-                break
 
             disturbance_feedback = jnp.zeros((nu,), dtype=jnp.float64)
             for j in range(k + 1):
@@ -363,25 +370,44 @@ def main():
 
             u = U_pred[k] + disturbance_feedback
 
-            key, x, w = dubins_step_with_disturbance(key, x, u, E_sim, dt, i)
+            key, x, injected_disturbance = dubins_step_with_disturbance(key, x, u, E_sim, dt, i)
 
-            disturbed[i, k, :2] = np.abs(np.asarray(X_pred[k + 1, :2] - x[:2]))
-            disturbed[i, k, 2]  = np.abs(np.asarray(X_pred[k + 1, 2] - x[2]))
+            # disturbed[i, k] = np.asarray(x - X_pred[k + 1])
+            disturbed[i, k] = np.asarray(x)
 
-            disturbance_history.append(E_sim @ w)
+            disturbance_history.append(injected_disturbance)
+
             xs[i, k] = np.asarray(x)
-            
+
+
     plans_xy = []
     lowers_xy = []
     uppers_xy = []
-    tube = get_trajectory_tubes(Phi_x, EN)
-    plan_xy = X_pred[:, :2]
-    lower = plan_xy - tube[:, :2]
-    upper = plan_xy + tube[:, :2]
 
-    plans_xy.append(plan_xy)
-    lowers_xy.append(lower)
-    uppers_xy.append(upper)
+    # symmetric tube radius
+    tube = np.asarray(get_trajectory_tubes(Phi_x, EN))          # (N+1, n)
+
+    # nominal plan
+    plan = np.asarray(X_pred)                                   # (N+1, n)
+
+    # propagated center shift
+    tube_center_shift = jnp.einsum("kjxn,jn->kx", Phi_x, r_centerN)
+    shift = np.asarray(tube_center_shift)                       # (N+1, n)
+
+    # off-centered reachable tube
+    lower = plan - tube + shift                                 # (N+1, n)
+    upper = plan + tube + shift                                 # (N+1, n)
+
+    # lower_real = shift - tube
+    # upper_real = shift + tube
+
+    # tube center for plotting
+    plan_center = plan                                   # (N+1, n)
+
+    # XY slices for plotting
+    plans_xy.append(plan_center[:, :2])
+    lowers_xy.append(lower[:, :2])
+    uppers_xy.append(upper[:, :2])
 
     plot_rollouts_tubes_centers(
         xs=xs,
@@ -398,9 +424,11 @@ def main():
         margin=0.2,
         rollout_alpha=0.5,
     )
+
     plot_tube_graph(
         disturbed=disturbed,
-        tube=tube,
+        lower=lower,
+        upper=upper,
         dt=dt,
     )
 

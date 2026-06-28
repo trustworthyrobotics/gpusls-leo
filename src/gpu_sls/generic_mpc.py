@@ -9,13 +9,9 @@ import jax
 import jax.numpy as jnp
 
 import gpu_sls.gpu_sqp
-from gpu_sls.external.linearization_sls_temp.test_taylor import estimate_remainder_TM
-from gpu_sls.external.linearization_sls_temp.src.taylor_model import regular_lagrange, path_based_lagrange
-from gpu_sls.external.linearization_sls_temp.src.rhs_eval import build_auto_rhs_analytic
-from gpu_sls.external.linearization_sls.test_path import remainder_bound_path_based
-# from gpu_sls.external.linearization_sls_temp.test_hessian import remainder_bound_path_based
-from gpu_sls.external.linearization_sls.neural_wrapper import make_remainder_bound_builder
-from gpu_sls.external.linearization_sls.neural.load import load_model
+from gpu_sls.external.linearization_error.src.linearization import path_based_hessian
+from gpu_sls.external.linearization_error.src.linearization import crown_linearization
+from gpu_sls.external.linearization_error.neural.load import load_model
 
 @dataclass
 class MPCConfig:
@@ -103,17 +99,18 @@ class GenericMPC:
         if neural_dynamics:
             # TODO: Remove this hardcoded
             model = load_model(model_dir)
-            split_budget = (5, 5, 4, 1, 4, 1, 1)
-            remainder_func = make_remainder_bound_builder(model, split_budget=split_budget)
-        if use_taylor_model:
-            D = config.n + config.nu
-            V = D + 1
-            splits_cfg = {i: 1 for i in range(config.n + config.nu)}
-            rhs_tm_fn = build_auto_rhs_analytic(f_flat, D=D, V=V, lagrange_impl=path_based_lagrange)
-            # remainder_func = partial(estimate_remainder_TM, rhs_tm_fn, state_dim=config.n, splits_cfg=splits_cfg)
-            remainder_func = partial(estimate_remainder_TM, rhs_tm_fn, state_dim=config.n)
+            # split_budget = (5, 5, 4, 1, 4, 1, 1)
+            remainder_func = crown_linearization(
+                model,
+                state_dim=config.n,
+                # splits_cfg=split_budget
+            )
+            
         else:
-            remainder_func = partial(remainder_bound_path_based, f_flat, state_dim=config.n)
+            remainder_func = path_based_hessian(
+                f_flat,
+                state_dim=config.n,
+            )
         
         splts_cfg = (4, 4, 4, 4)
 

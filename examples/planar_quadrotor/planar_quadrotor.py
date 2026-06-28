@@ -3,6 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 from typing import Any, Callable
+import sys
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+LINEARIZATION_ERROR = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "linearization_error"
+)
+
+sys.path.insert(0, LINEARIZATION_ERROR)
 
 import jax
 import jax.numpy as jnp
@@ -322,11 +330,11 @@ def main():
     # Solver configs
     admm_cfg = ADMMConfig(
         eps_abs=1e-2,
-        eps_rel=0,
+        eps_rel=1e-2,
         rho_max=1e3,
         max_iterations=400,
         rho_update_frequency=20,
-        initial_rho=1.0,
+        initial_rho=5.0,
     )
 
     sls_cfg = SLSConfig(

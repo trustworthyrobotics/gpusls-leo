@@ -12,7 +12,6 @@ from gpu_sls.gpu_admm import constrained_solve
 from gpu_sls.external.primal_dual_ilqr.primal_dual_ilqr.primal_tvlqr import tvlqr_gpu
 # from gpu_sls.external.linearization_sls.src.helper import make_step_boxes, build_linear_tm, prepare_initial_set
 # from gpu_sls.external.linearization_sls.src.taylor_model import LinTM
-from gpu_sls.external.linearization_sls_temp.test_taylor import estimate_remainder_TM
 
 @dataclass(frozen=True)
 class SLSConfig:
@@ -26,6 +25,7 @@ class SLSConfig:
     enable_linearization_bounds: bool = False
     enable_linearization_gradients: bool = False
     lambda_rem: float = 0.0
+    remainder_uses_time: bool = True
 
 
 
@@ -349,58 +349,81 @@ def get_tube_interval(Phi_x, Phi_u, E, center):
 
     return x_width_lower, x_width_upper, u_width_lower, u_width_upper
 
-@partial(jit, static_argnums=(5, 6))
+@partial(jit, static_argnames=("remainder_func", "splits_cfg", "remainder_uses_time"))
 def get_combined_disturbance(
     E,
-    X, U, Phi_x, Phi_u,
-    remainder_func, splits_cfg, E_prev, r_center_prev, disturbance_center
+    X,
+    U,
+    Phi_x,
+    Phi_u,
+    remainder_func,
+    splits_cfg,
+    E_prev,
+    r_center_prev,
+    disturbance_center,
+    remainder_uses_time: bool,
 ):
     T = U.shape[0]
     nx = X.shape[1]
     nu = U.shape[1]
-    # jax.debug.print("E_prev: {}", E_prev)
-    # jax.debug.print("Phi_x: {}", Phi_x)
-    # jax.debug.print("Phi_u: {}", Phi_u)
-    (x_tube_width_lower, x_tube_width_upper,
-     u_tube_width_lower, u_tube_width_upper) = get_tube_interval(Phi_x, Phi_u, E_prev, r_center_prev)
+
+    (
+        x_tube_width_lower,
+        x_tube_width_upper,
+        u_tube_width_lower,
+        u_tube_width_upper,
+    ) = get_tube_interval(Phi_x, Phi_u, E_prev, r_center_prev)
 
     U_pad = jnp.concatenate([U, U[-1:]], axis=0)
+
     u_width_lower_pad = jnp.concatenate(
         [u_tube_width_lower, jnp.zeros((1, nu), dtype=u_tube_width_lower.dtype)],
-        axis=0
+        axis=0,
     )
     u_width_upper_pad = jnp.concatenate(
         [u_tube_width_upper, jnp.zeros((1, nu), dtype=u_tube_width_upper.dtype)],
-        axis=0
+        axis=0,
     )
 
-    t = jnp.arange(T + 1, dtype=X.dtype)[:, None]
-    t_width = jnp.zeros_like(t)
+    if remainder_uses_time:
+        t = jnp.arange(T + 1, dtype=X.dtype)[:, None]
+        t_width = jnp.zeros_like(t)
 
-    z_center = jnp.concatenate([X, U_pad, t], axis=-1)
-    z_width_lower  = jnp.concatenate([x_tube_width_lower, u_width_lower_pad, t_width], axis=-1)
-    z_width_upper  = jnp.concatenate([x_tube_width_upper, u_width_upper_pad, t_width], axis=-1)
+        z_ref = jnp.concatenate([X, U_pad, t], axis=-1)
+        z_width_lower = jnp.concatenate(
+            [x_tube_width_lower, u_width_lower_pad, t_width], axis=-1
+        )
+        z_width_upper = jnp.concatenate(
+            [x_tube_width_upper, u_width_upper_pad, t_width], axis=-1
+        )
+    else:
+        z_ref = jnp.concatenate([X, U_pad], axis=-1)
+        z_width_lower = jnp.concatenate(
+            [x_tube_width_lower, u_width_lower_pad], axis=-1
+        )
+        z_width_upper = jnp.concatenate(
+            [x_tube_width_upper, u_width_upper_pad], axis=-1
+        )
 
-    z_lo = z_center + z_width_lower
-    z_up = z_center + z_width_upper
-    r_bound_lower, r_bound_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo, z_up)   # [T+1, nx]
-    # r_bound_lower, r_bound_upper = remainder_func(z_lo, z_up)
-    # print("r_bound_lower shape:", r_bound_lower.shape)
-    # print("r_bound_upper shape:", r_bound_upper.shape)
-    # print("r_radius shape:", r_radius.shape)
-    r_center = (r_bound_lower + r_bound_upper) / 2
-    r_radius = (r_bound_upper - r_bound_lower) / 2
-    # jax.debug.print("Z_width lowr: {} z_width_upper: {}", z_width_lower, z_width_upper)
-    # jax.debug.print("R_RADIUS max: {}", jnp.max(r_radius))
-    # jax.debug.print("R_RADIUS mean: {}", jnp.mean(r_radius))
-    # jax.debug.print(
-    #     "Nonzeros: {}",
-    #     jnp.sum(r_radius != 0)
-    # )
-    diag_r = jax.vmap(jnp.diag)(r_radius)                              # [T+1, nx, nx]
+    z_lo = z_ref + z_width_lower
+    z_up = z_ref + z_width_upper
 
-    E_combined = jnp.concatenate([E, diag_r], axis=2)                # [T+1, nx, 2nx]
+    z_nom = 0.5 * (z_lo + z_up)
+    z_eps = 0.5 * (z_up - z_lo)
+
+    r_interval = remainder_func(z_nom, z_eps)
+
+    r_lower = r_interval.lower
+    r_upper = r_interval.upper
+
+    r_center = 0.5 * (r_lower + r_upper)
+    r_radius = 0.5 * (r_upper - r_lower)
+
+    diag_r = jax.vmap(jnp.diag)(r_radius)
+
+    E_combined = jnp.concatenate([E, diag_r], axis=2)
     combined_center = r_center + disturbance_center
+
     return E_combined, combined_center
 
 def get_combined_zeros(E):
@@ -448,7 +471,7 @@ def sls_solve_gpu(cfg, remainder_func, Q: jnp.ndarray, q: jnp.ndarray,
     def body_fn(carry):
         i, beta, x_curr, u_curr, v_curr, w, y, rho, converged, _, h_ct, Phi_x_prev, Phi_u_prev, mu, E_prev, r_center = carry
         if sls_config.enable_linearization_bounds:
-            E_aug, r_center = get_combined_disturbance(E, X, U, Phi_x_prev, Phi_u_prev, remainder_func, splits_cfg, E_prev, r_center, disturbance_center)
+            E_aug, r_center = get_combined_disturbance(E, X, U, Phi_x_prev, Phi_u_prev, remainder_func, splits_cfg, E_prev, r_center, disturbance_center, sls_config.remainder_uses_time)
         else:
             E_aug = get_combined_zeros(E)
             r_center = disturbance_center

@@ -149,7 +149,7 @@ def add_obstacle_constraints(C: jnp.ndarray, D: jnp.ndarray, f: jnp.ndarray,
     
     return C_all, D_all, f_all
 
-def merit_function_factory(rho_merit, lambda_rem, remainder_func, eps_rem, disturbance):
+def merit_function_factory(rho_merit, lambda_rem, remainder_func, eps_rem, disturbance, use_remainder_time):
     @partial(jax.jit, static_argnames=("remainder_func", "disturbance"))
     def merit_fn(V, g, c, X, U, Phi_x_prev, Phi_u_prev, r_center_prev,
                  remainder_func=remainder_func, disturbance=disturbance):
@@ -171,7 +171,7 @@ def merit_function_factory(rho_merit, lambda_rem, remainder_func, eps_rem, distu
 
         r = remainder_penalty(
             X, U, eps_rem, tube_center_shift,
-            remainder_func, disturbance, Phi_x_prev, Phi_u_prev
+            remainder_func, disturbance, Phi_x_prev, Phi_u_prev, use_remainder_time,
         )
         return g + jnp.sum(V * c) + 0.5 * rho_merit * jnp.sum(c * c) + lambda_rem * r
         # return g + jnp.sum(V * c) + 0.5 * rho_merit * jnp.sum(c * c)
@@ -203,27 +203,57 @@ def get_tube_width_surrogate(Phi_x, Phi_u, E):
 
     return x_width, u_width
 
-@partial(jax.jit, static_argnames=("remainder_func", "disturbance"))
-def remainder_penalty(X_, U_, eps_, tube_center_shift, remainder_func, disturbance, Phi_x, Phi_u):
+@partial(
+    jax.jit,
+    static_argnames=("remainder_func", "disturbance", "remainder_uses_time"),
+)
+def remainder_penalty(
+    X_,
+    U_,
+    eps_,
+    tube_center_shift,
+    remainder_func,
+    disturbance,
+    Phi_x,
+    Phi_u,
+    remainder_uses_time: bool,
+):
     T = U_.shape[0]
-    t = jnp.arange(T + 1, dtype=X_.dtype)[:, None]
-    U_pad_ = jnp.pad(U_, ((0, 1), (0, 0)))
-    z_nom_ = jnp.concatenate([X_, U_pad_, t], axis=1)
-    z_lo_ = z_nom_ - eps_ + tube_center_shift
-    z_up_ = z_nom_ + eps_ + tube_center_shift
 
-    r_lower, r_upper = jax.vmap(remainder_func, in_axes=(0, 0))(z_lo_, z_up_)
+    U_pad_ = jnp.pad(U_, ((0, 1), (0, 0)))
+
+    if remainder_uses_time:
+        t = jnp.arange(T + 1, dtype=X_.dtype)[:, None]
+        z_ref = jnp.concatenate([X_, U_pad_, t], axis=1)
+    else:
+        z_ref = jnp.concatenate([X_, U_pad_], axis=1)
+
+    eps_ = eps_[..., : z_ref.shape[-1]]
+    tube_center_shift = tube_center_shift[..., : z_ref.shape[-1]]
+
+    z_lo = z_ref - eps_ + tube_center_shift
+    z_up = z_ref + eps_ + tube_center_shift
+
+    z_nom = 0.5 * (z_lo + z_up)
+    z_eps = 0.5 * (z_up - z_lo)
+
+    r_interval = remainder_func(z_nom, z_eps)
+
+    r_lower = r_interval.lower
+    r_upper = r_interval.upper
+
     r_radius = 0.5 * (r_upper - r_lower)
     diag_r = jax.vmap(jnp.diag)(r_radius)
+
     E = disturbance(X_)
     E_combined = jnp.concatenate([E, diag_r], axis=2)
+
     x_width, u_width = get_tube_width_surrogate(Phi_x, Phi_u, E_combined)
-    # return jnp.sum(E_combined)
+
     return jnp.sum(x_width) + jnp.sum(u_width)
 
-
-@partial(jax.jit, static_argnames=("remainder_func", "disturbance"))
-def get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func, disturbance):
+@partial(jax.jit, static_argnames=("sls_config","remainder_func", "disturbance"))
+def get_remainder_gradients(sls_config,X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func, disturbance):
     T = U.shape[0]
     nu = U.shape[1]
     t = jnp.arange(T + 1, dtype=X.dtype)[:, None]
@@ -245,7 +275,7 @@ def get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev,
     _, (grad_X_rem, grad_U_rem) = jax.value_and_grad(
         remainder_penalty,
         argnums=(0, 1)
-    )(X, U, z_width, tube_center_shift, remainder_func, disturbance, Phi_x_prev, Phi_u_prev)
+    )(X, U, z_width, tube_center_shift, remainder_func, disturbance, Phi_x_prev, Phi_u_prev, sls_config.remainder_uses_time)
     grad_X_rem = grad_X_rem.at[0].set(0.0)
     return grad_X_rem, grad_U_rem
 
@@ -282,7 +312,7 @@ def compute_search_direction(
     q, r_pad = linearizer(X, pad(U), jnp.arange(T + 1), pad(V[1:]), V)
     r = r_pad[:-1]
     if sls_config.enable_linearization_gradients:
-        grad_X_rem, grad_U_rem = get_remainder_gradients(X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func, disturbance)
+        grad_X_rem, grad_U_rem = get_remainder_gradients(sls_config, X, U, Phi_x_prev, Phi_u_prev, E_prev, r_center_prev, remainder_func, disturbance)
         t = sqp_iteration / jnp.maximum(
             sls_config.max_initial_sqp_iterations + sqp_config.max_sqp_iterations - 1,
             1,
@@ -435,7 +465,8 @@ def sqp(
                 sls_config.lambda_rem,
                 remainder_func,
                 z_width,
-                disturbance
+                disturbance,
+                sls_config.remainder_uses_time
             )
             current_merit = merit_fn(V_curr, g, c, X_curr, U_curr, Phi_x1, Phi_u1, r_center_prev)
             merit_slope = slope(dX, dU, dV, c, q, r, rho_merit)

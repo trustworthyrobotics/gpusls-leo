@@ -174,54 +174,68 @@ def plot_rollouts_tubes_centers(
         plt.show()
 
 
-def plot_tube_graph(disturbed, tube, dt):
-    # -----------------------------
-    # Deviation vs tube size plots (nan-safe)
-    # -----------------------------
+def plot_tube_graph(disturbed, lower, upper, dt):
+    # disturbed: (n_rollouts, T, 3)
+    # lower, upper: (T+1, 3)
+
     dx_np_all  = disturbed[:, :, 0]
     dy_np_all  = disturbed[:, :, 1]
     dth_np_all = disturbed[:, :, 2]
 
-    tube_x_np  = np.asarray(tube[1:, 0])
-    tube_y_np  = np.asarray(tube[1:, 1])
-    tube_th_np = np.asarray(tube[1:, 2])
+    lower = np.asarray(lower[1:])
+    upper = np.asarray(upper[1:])
+
+    lower_x, upper_x = lower[:, 0], upper[:, 0]
+    lower_y, upper_y = lower[:, 1], upper[:, 1]
+    lower_th, upper_th = lower[:, 2], upper[:, 2]
 
     t = np.arange(dx_np_all.shape[1]) * dt
 
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(8, 8), sharex=True)
 
     # ---- X direction ----
-    ax1.plot(t, tube_x_np, label="tube size (x)", linewidth=4)
+    ax1.plot(t, upper_x, label="upper bound (x)", linewidth=3)
+    ax1.plot(t, lower_x, label="lower bound (x)", linewidth=3)
+    ax1.fill_between(t, lower_x, upper_x, alpha=0.2)
+
     for r, dx_np in enumerate(dx_np_all):
         m = np.isfinite(dx_np)
-        ax1.plot(t[m], dx_np[m], label="|x - x_nominal|" if r == 0 else None)
+        ax1.plot(t[m], dx_np[m], label="x rollout" if r == 0 else None)
+
     ax1.set_ylabel("meters")
-    ax1.set_title("X-direction: Deviation vs Tube Size")
+    ax1.set_title("X-direction: Rollouts vs Tube Bounds")
     ax1.grid(True)
     ax1.legend()
 
     # ---- Y direction ----
-    ax2.plot(t, tube_y_np, label="tube size (y)", linewidth=4)
+    ax2.plot(t, upper_y, label="upper bound (y)", linewidth=3)
+    ax2.plot(t, lower_y, label="lower bound (y)", linewidth=3)
+    ax2.fill_between(t, lower_y, upper_y, alpha=0.2)
+
     for r, dy_np in enumerate(dy_np_all):
         m = np.isfinite(dy_np)
-        ax2.plot(t[m], dy_np[m], label="|y - y_nominal|" if r == 0 else None)
+        ax2.plot(t[m], dy_np[m], label="y rollout" if r == 0 else None)
+
     ax2.set_ylabel("meters")
-    ax2.set_title("Y-direction: Deviation vs Tube Size")
+    ax2.set_title("Y-direction: Rollouts vs Tube Bounds")
     ax2.grid(True)
     ax2.legend()
 
     # ---- Theta direction ----
-    ax3.plot(t, tube_th_np, label="tube size (theta)", linewidth=4)
+    ax3.plot(t, upper_th, label="upper bound (theta)", linewidth=3)
+    ax3.plot(t, lower_th, label="lower bound (theta)", linewidth=3)
+    ax3.fill_between(t, lower_th, upper_th, alpha=0.2)
+
     for r, dth_np in enumerate(dth_np_all):
         m = np.isfinite(dth_np)
-        ax3.plot(t[m], dth_np[m], label="|wrap(theta - theta_nominal)|" if r == 0 else None)
+        ax3.plot(t[m], dth_np[m], label="theta rollout" if r == 0 else None)
+
     ax3.set_xlabel("time (s)")
     ax3.set_ylabel("radians")
-    ax3.set_title("Theta-direction: Deviation vs Tube Size")
+    ax3.set_title("Theta-direction: Rollouts vs Tube Bounds")
     ax3.grid(True)
     ax3.legend()
 
     plt.tight_layout()
-    plt.savefig("disturbance_vs_tube_size_xytheta_dubins.png", dpi=300, bbox_inches="tight")
+    plt.savefig("disturbance_vs_bounds_xytheta_dubins.png", dpi=300, bbox_inches="tight")
     plt.close(fig)
-
