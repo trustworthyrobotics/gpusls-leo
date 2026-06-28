@@ -4,6 +4,7 @@ import os
 from typing import Any, Callable
 import sys
 
+
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
 LINEARIZATION_ERROR = os.path.join(
     ROOT, "src", "gpu_sls", "external", "linearization_error"
@@ -408,6 +409,53 @@ def main():
     plans_xy.append(plan_center[:, :2])
     lowers_xy.append(lower[:, :2])
     uppers_xy.append(upper[:, :2])
+
+    np.savez_compressed(
+        "dubins_rollout_render_data.npz",
+
+        # rollout data
+        xs=xs,                         # (N_ROLLOUTS, N, 3)
+        disturbed=disturbed,           # currently same as xs in your script
+
+        # nominal plan / controls
+        X_pred=np.asarray(X_pred),
+        U_pred=np.asarray(U_pred),
+        V_pred=np.asarray(V_pred),
+
+        # tube data
+        tube=tube,
+        lower=lower,
+        upper=upper,
+        shift=shift,
+        plans_xy=np.asarray(plans_xy),
+        lowers_xy=np.asarray(lowers_xy),
+        uppers_xy=np.asarray(uppers_xy),
+
+        # obstacle data
+        obstacles=np.asarray(obstacles),
+        obstacle_centers=np.asarray(obstacles[:, :2]),
+        obstacle_radii=np.asarray(obstacles[:, 2]),
+
+        # dynamics / metadata
+        x0=np.asarray(x0),
+        x_goal=np.asarray(x_goal),
+        X_ref=np.asarray(X_ref),
+        dt=np.asarray(dt),
+        N=np.asarray(N),
+        T_steps=np.asarray(T_steps),
+        N_ROLLOUTS=np.asarray(N_ROLLOUTS),
+        NUM_RANDOM=np.asarray(NUM_RANDOM),
+        NUM_ADV=np.asarray(NUM_ADV),
+        E_sim=np.asarray(E_sim),
+        alpha_sim=np.asarray(alpha_sim),
+
+        # SLS objects needed to recompute tubes/feedback
+        Phi_x=np.asarray(Phi_x),
+        Phi_u=np.asarray(Phi_u),
+        EN=np.asarray(EN),
+        r_centerN=np.asarray(r_centerN),
+        backoffs=np.asarray(backoffs),
+    )
 
     plot_rollouts_tubes_centers(
         xs=xs,
