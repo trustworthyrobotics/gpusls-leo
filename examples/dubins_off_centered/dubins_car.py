@@ -19,7 +19,7 @@ from gpu_sls.utils.constraint_utils import combine_constraints
 from gpu_sls.utils.sls_visual import get_trajectory_tubes
 from visualize_experiment import plot_rollouts_tubes_centers, plot_tube_graph
 
-config.update("jax_enable_x64", False)
+config.update("jax_enable_x64", True)
 config.update("jax_compilation_cache_dir", "/tmp/jax_cache")
 config.update("jax_persistent_cache_min_compile_time_secs", 0)
 config.update("jax_persistent_cache_min_entry_size_bytes", -1)
@@ -255,7 +255,7 @@ def main():
 
     parameter = dt
 
-    om_max = 100.0
+    om_max = 500.0
     u_min = jnp.array([-om_max], dtype=jnp.float64)
     u_max = jnp.array([om_max], dtype=jnp.float64)
 
@@ -271,7 +271,7 @@ def main():
     n_obs = obstacles.shape[0]
     nc = 2 * nu + 2 * n + n_obs
 
-    E_mag = 0.01
+    E_mag = 0.05
     alpha_sim = E_mag * dt
     disturbance = make_constant_disturbance(n=n, alpha=alpha_sim)
 
@@ -301,7 +301,7 @@ def main():
         max_sls_iterations=2,
         sls_primal_tol=1e-2,
         enable_fastsls=True,
-        initialize_nominal=True,
+        initialize_nominal=False,
         max_initial_sqp_iterations=100,
         warm_start=False,
         rti=False,
@@ -400,8 +400,8 @@ def main():
     shift = np.asarray(tube_center_shift)                       # (N+1, n)
 
     # off-centered reachable tube
-    lower = plan + shift - tube                                 # (N+1, n)
-    upper = plan + shift + tube                                 # (N+1, n)
+    lower = plan - tube                                 # (N+1, n)
+    upper = plan + tube                                 # (N+1, n)
 
     # lower_real = shift - tube
     # upper_real = shift + tube
