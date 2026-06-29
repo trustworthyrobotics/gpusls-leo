@@ -1,76 +1,769 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <!-- Character Encoding -->
-    <meta charset="UTF-8">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GPUSLS-LEO | GPU-Parallel Linearization Error Bounds</title>
+  <meta name="description" content="Research paper website for GPUSLS-LEO: GPU-parallel linearization error bounds for real-time robust optimal control of nonlinear and neural network dynamics.">
+  <meta name="author" content="Jeffrey Fang, Keyi Shen, Anutam Srinivasan, Glen Chou">
+  <style>
+    :root {
+      --ink: #10151f;
+      --muted: #596274;
+      --line: #d9dee8;
+      --paper: #fbfaf6;
+      --panel: #ffffff;
+      --blue: #1e5aa8;
+      --teal: #007c89;
+      --green: #4f7d2c;
+      --gold: #a46a16;
+      --rose: #a23e58;
+      --shadow: 0 18px 60px rgba(16, 21, 31, 0.12);
+      --container-width: 1160px;
+      --text-column-width: 1160px;
+    }
 
-    <!-- Responsive Design -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    * {
+      box-sizing: border-box;
+    }
 
-    <!-- SEO -->
-    <title>Your Website</title>
-    <meta name="description" content="A brief description of your website.">
-    <meta name="author" content="Your Name">
+    html {
+      scroll-behavior: smooth;
+    }
 
-    <!-- Favicon -->
-    <link rel="icon" href="favicon.ico">
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
 
-    <!-- Styles -->
-    <link rel="stylesheet" href="styles.css">
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid rgba(217, 222, 232, 0.85);
+      background: rgba(251, 250, 246, 0.9);
+      backdrop-filter: blur(16px);
+    }
+
+    .nav {
+      width: min(var(--container-width), calc(100% - 40px));
+      margin: 0 auto;
+      min-height: 68px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+      white-space: nowrap;
+    }
+
+    .brand-mark {
+      width: 34px;
+      height: 34px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      background: conic-gradient(from 210deg, var(--blue), var(--teal), var(--green), var(--gold), var(--blue));
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .nav-links a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 0 12px;
+      border-radius: 8px;
+    }
+
+    .nav-links a:hover {
+      color: var(--ink);
+      background: rgba(30, 90, 168, 0.08);
+    }
+
+    main {
+      overflow: hidden;
+    }
+
+    .hero {
+      border-bottom: 1px solid var(--line);
+      background:
+        radial-gradient(circle at top left, rgba(30, 90, 168, 0.14), transparent 34rem),
+        linear-gradient(120deg, rgba(255, 255, 255, 0.75), rgba(251, 250, 246, 0.6));
+    }
+
+    .hero-inner {
+      width: min(var(--container-width), calc(100% - 40px));
+      min-height: 64vh;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      padding: 56px 0 44px;
+    }
+
+    .eyebrow {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      line-height: 1.04;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 1120px;
+      font-size: clamp(34px, 5vw, 64px);
+    }
+
+    .lead {
+      max-width: var(--text-column-width);
+      margin: 24px 0 0;
+      color: #333b4b;
+      font-size: clamp(18px, 2vw, 22px);
+      line-height: 1.48;
+    }
+
+    .authors {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      max-width: var(--text-column-width);
+      margin: 22px 0 0;
+      padding: 0;
+      color: var(--muted);
+      list-style: none;
+      font-weight: 650;
+    }
+
+    .authors li::after {
+      content: "/";
+      margin-left: 10px;
+      color: #b3bac7;
+    }
+
+    .authors li:last-child::after {
+      content: "";
+      margin: 0;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 12px;
+      margin: 30px auto 0;
+      max-width: var(--text-column-width);
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 18px;
+      border: 1px solid var(--ink);
+      border-radius: 8px;
+      font-weight: 800;
+      transition: transform 160ms ease, box-shadow 160ms ease, background 160ms ease;
+    }
+
+    .button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 26px rgba(16, 21, 31, 0.14);
+    }
+
+    .button.primary {
+      color: #fff;
+      background: var(--ink);
+    }
+
+    .button.secondary {
+      background: rgba(255, 255, 255, 0.72);
+    }
+
+    .section {
+      padding: 76px 0;
+    }
+
+    .section.tight {
+      padding: 64px 0;
+    }
+
+    .container {
+      width: min(var(--container-width), calc(100% - 40px));
+      margin: 0 auto;
+    }
+
+    .section-kicker {
+      color: var(--teal);
+      font-size: 13px;
+      font-weight: 850;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      margin-top: 10px;
+      max-width: var(--text-column-width);
+      font-size: clamp(30px, 4vw, 50px);
+    }
+
+    .section-intro {
+      max-width: var(--text-column-width);
+      margin: 18px 0 0;
+      color: #394253;
+      font-size: 18px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 18px;
+      margin-top: 28px;
+    }
+
+    .grid.three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .grid.two {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.82);
+      box-shadow: 0 10px 28px rgba(16, 21, 31, 0.06);
+    }
+
+    .text-card {
+      padding: 24px;
+    }
+
+    .text-card h3 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-height: 34px;
+      font-size: 20px;
+    }
+
+    .marker {
+      width: 10px;
+      height: 34px;
+      border-radius: 8px;
+      background: var(--blue);
+      flex: 0 0 auto;
+    }
+
+    .marker.teal {
+      background: var(--teal);
+    }
+
+    .marker.gold {
+      background: var(--gold);
+    }
+
+    .marker.rose {
+      background: var(--rose);
+    }
+
+    .text-card p {
+      margin: 16px 0 0;
+      color: var(--muted);
+    }
+
+    .method-band {
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+      background: #eef3f1;
+    }
+
+    .method-list {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      margin: 30px 0 0;
+      padding: 0;
+      list-style: none;
+      counter-reset: method;
+    }
+
+    .method-list li {
+      counter-increment: method;
+      position: relative;
+      min-height: 180px;
+      padding: 24px;
+      border: 1px solid rgba(16, 21, 31, 0.12);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .method-list li::before {
+      content: counter(method, decimal-leading-zero);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 32px;
+      margin-bottom: 18px;
+      color: #fff;
+      background: var(--ink);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 900;
+    }
+
+    .method-list strong {
+      display: block;
+      font-size: 18px;
+      line-height: 1.22;
+    }
+
+    .method-list span {
+      display: block;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .figure-card {
+      overflow: hidden;
+    }
+
+    .figure-preview {
+      height: 310px;
+      border-bottom: 1px solid var(--line);
+      background: #fff;
+    }
+
+    .animation-preview {
+      height: 430px;
+      background: #f8fafc;
+    }
+
+    .figure-preview img {
+      width: 100%;
+      height: 100%;
+      display: block;
+      object-fit: contain;
+      background: #fff;
+    }
+
+    .figure-copy {
+      padding: 18px 20px 20px;
+    }
+
+    .figure-copy h3 {
+      font-size: 19px;
+    }
+
+    .figure-copy p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .runtime-card {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      overflow: hidden;
+      background: #fff;
+    }
+
+    .runtime-copy {
+      padding: 22px 24px 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .runtime-copy h3 {
+      font-size: 22px;
+    }
+
+    .runtime-copy p {
+      max-width: 620px;
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .runtime-preview {
+      height: auto;
+      min-height: 260px;
+      padding: 18px;
+      border-bottom: 0;
+      display: grid;
+      place-items: center;
+      background: #f8fafc;
+    }
+
+    .runtime-preview img {
+      max-height: 260px;
+    }
+
+    .results-list {
+      display: grid;
+      grid-template-columns: 0.9fr 1.1fr;
+      gap: 34px;
+      align-items: start;
+      margin-top: 30px;
+    }
+
+    .result-points {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 14px;
+    }
+
+    .result-points li {
+      padding: 18px 20px;
+      border-left: 5px solid var(--teal);
+      background: rgba(255, 255, 255, 0.82);
+      border-radius: 0 8px 8px 0;
+      color: #384151;
+    }
+
+    .result-points strong {
+      color: var(--ink);
+    }
+
+    .abstract-box {
+      max-width: var(--text-column-width);
+      margin-top: 28px;
+      padding: 34px 38px;
+      border: 1px solid rgba(30, 90, 168, 0.18);
+      border-left: 7px solid var(--blue);
+      border-radius: 8px;
+      background:
+        linear-gradient(135deg, rgba(30, 90, 168, 0.08), rgba(0, 124, 137, 0.05)),
+        #fff;
+      color: #2f3848;
+      font-size: 19px;
+      line-height: 1.68;
+      box-shadow: 0 14px 38px rgba(16, 21, 31, 0.08);
+    }
+
+    .abstract-box strong {
+      color: var(--ink);
+      font-weight: 850;
+    }
+
+    .footer {
+      padding: 42px 0;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      background: #fff;
+      font-size: 14px;
+    }
+
+    .footer-inner {
+      width: min(var(--container-width), calc(100% - 40px));
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 960px) {
+      .nav {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 16px 0;
+      }
+
+      .nav-links {
+        width: 100%;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+
+      .hero-inner {
+        min-height: auto;
+        padding-top: 42px;
+      }
+
+      .grid.three,
+      .grid.two,
+      .method-list,
+      .results-list {
+        grid-template-columns: 1fr;
+      }
+
+      .section {
+        padding: 58px 0;
+      }
+    }
+
+    @media (max-width: 620px) {
+      .nav,
+      .container,
+      .hero-inner,
+      .footer-inner {
+        width: min(100% - 28px, var(--container-width));
+      }
+
+      .brand {
+        white-space: normal;
+      }
+
+      .nav-links a {
+        padding: 0 10px;
+      }
+
+      .figure-preview {
+        min-height: 300px;
+      }
+
+      .abstract-box {
+        padding: 22px;
+      }
+    }
+  </style>
 </head>
 <body>
+  <header class="site-header">
+    <nav class="nav" aria-label="Primary navigation">
+      <a class="brand" href="#top" aria-label="GPUSLS-LEO home">
+        <span class="brand-mark">LEO</span>
+        <span>GPUSLS-LEO</span>
+      </a>
+      <ul class="nav-links">
+        <li><a href="#abstract">Abstract</a></li>
+        <li><a href="#method">Method</a></li>
+        <li><a href="#results">Results</a></li>
+        <li><a href="#experiments">Experiments</a></li>
+      </ul>
+    </nav>
+  </header>
 
-    <!-- Header -->
-    <header>
-        <nav class="navbar">
-            <h1 class="logo">YourLogo</h1>
+  <main id="top">
+    <section class="hero" aria-labelledby="paper-title">
+      <div class="hero-inner">
+        <div>
+          <h1 id="paper-title">GPU-Parallel Linearization Error Bounds for Real-Time Robust Optimal Control of Nonlinear and Neural Network Dynamics</h1>
+          <p class="lead">
+            Tight, differentiable, provably sound linearization error bounds integrated into a GPU-accelerated system-level synthesis solver for real-time robust nonlinear MPC.
+          </p>
+          <ul class="authors" aria-label="Authors">
+            <li>Jeffrey Fang</li>
+            <li>Keyi Shen</li>
+            <li>Anutam Srinivasan</li>
+            <li>Glen Chou</li>
+          </ul>
+          <div class="actions" aria-label="Paper actions">
+            <a class="button primary" href="#">arXiv</a>
+            <a class="button secondary" href="https://github.com/trustworthyrobotics/gpusls-leo">Code</a>
+          </div>
+        </div>
+      </div>
+    </section>
 
-            <ul class="nav-links">
-                <li><a href="#">Home</a></li>
-                <li><a href="#">About</a></li>
-                <li><a href="#">Projects</a></li>
-                <li><a href="#">Contact</a></li>
-            </ul>
-        </nav>
-    </header>
+    <section class="section" id="abstract" aria-labelledby="abstract-title">
+      <div class="container">
+        <span class="section-kicker">Abstract</span>
+        <h2 id="abstract-title">Real-Time Robust Control with Certified Reachable Tubes</h2>
+        <div class="abstract-box">
+          This paper studies real-time robust optimal control for uncertain nonlinear systems, where linear time-varying approximations make planning tractable but require sound linearization error bounds to guarantee robust constraint satisfaction. <strong>GPUSLS-LEO</strong> develops tight, differentiable, GPU-parallel bounds for analytic and neural network dynamics, then integrates them into a system-level synthesis robust control solver. The result is online optimization of robust feedback policies that account for linearization error and produce <strong>tight, formally verified reachable tubes</strong> on nonlinear and learned dynamics.
+        </div>
+      </div>
+    </section>
 
-    <!-- Hero Section -->
-    <main>
-        <section class="hero">
-            <h2>Welcome to Your Website</h2>
-            <p>
-                Replace this with your own content.
-            </p>
+    <section class="section tight" aria-labelledby="challenge-title">
+      <div class="container">
+        <span class="section-kicker">Challenge</span>
+        <h2 id="challenge-title">Certified Linearization Error for Real-Time Control</h2>
+        <p class="section-intro">
+          LTV approximations make nonlinear robust optimal control tractable, but their guarantees depend on bounding the gap between the true dynamics and the approximation. The paper targets bounds that are tight enough to reduce conservativeness, fast enough for online planning, and differentiable enough to guide trajectory optimization.
+        </p>
+        <div class="grid three">
+          <article class="card text-card">
+            <h3><span class="marker"></span>Tight local bounds</h3>
+            <p>Path-based Hessian bounds improve over standard interval methods for analytic dynamics by focusing on the local tube around a nominal trajectory.</p>
+          </article>
+          <article class="card text-card">
+            <h3><span class="marker teal"></span>Neural dynamics</h3>
+            <p>Verifier-generated affine relaxations with local Jacobian corrections give certified linearization error bounds for learned models.</p>
+          </article>
+          <article class="card text-card">
+            <h3><span class="marker gold"></span>Robust synthesis</h3>
+            <p>Zonotopic uncertainty propagation handles non-zero-centered disturbance sets and right-invertible disturbance matrices inside SLS.</p>
+          </article>
+        </div>
+      </div>
+    </section>
 
-            <a href="#" class="button">
-                Get Started
-            </a>
-        </section>
+    <section class="section method-band" id="method" aria-labelledby="method-title">
+      <div class="container">
+        <span class="section-kicker">Method</span>
+        <h2 id="method-title">GPUSLS-LEO combines certified bounds with GPU-parallel control synthesis.</h2>
+        <ol class="method-list">
+          <li>
+            <strong>Linearize along the nominal trajectory.</strong>
+            <span>Use an LTV surrogate while preserving a certified accounting of the nonlinear residual.</span>
+          </li>
+          <li>
+            <strong>Compute differentiable error bounds.</strong>
+            <span>Use path-based bounds for analytic dynamics and verifier-based bounds for neural dynamics.</span>
+          </li>
+          <li>
+            <strong>Propagate zonotopic uncertainty.</strong>
+            <span>Represent exogenous disturbance and linearization error with tight reachable tubes.</span>
+          </li>
+          <li>
+            <strong>Optimize robust feedback on the GPU.</strong>
+            <span>Alternate nominal trajectory and robust controller updates using the GPUSLS-LEO formulation.</span>
+          </li>
+        </ol>
+      </div>
+    </section>
 
-        <!-- Additional Sections -->
-        <section id="about">
-            <h2>About</h2>
-            <p>Your content goes here.</p>
-        </section>
+    <section class="section" id="results" aria-labelledby="results-title">
+      <div class="container">
+        <span class="section-kicker">Results</span>
+        <h2 id="results-title">Evaluation Across Analytic and Neural Dynamics</h2>
+        <div class="results-list">
+          <ul class="result-points">
+            <li><strong>Satellite, 7D:</strong> average tube widths are 20% smaller than NL-SLS and 45% smaller than ellipsoidal GPUSLS-E while maintaining 100% rollout containment.</li>
+            <li><strong>Planar quadrotor, 6D:</strong> position tube area is reported as 91% smaller than a CCM baseline in an obstacle navigation task.</li>
+            <li><strong>Coupled quadrotors, 168D:</strong> 14 coupled 3D quadrotors navigate through obstacles with adversarial rollouts contained inside tight tubes.</li>
+            <li><strong>Neural T-pusher, 5D:</strong> formally accounting for neural-model linearization error keeps rollouts in the robust tube, unlike GPUSLS without error propagation.</li>
+          </ul>
+          <article class="card runtime-card">
+            <div class="runtime-copy">
+              <h3>Runtime Breakdown</h3>
+              <p>Per-iteration runtimes stay below the discretization time step across the reported systems, supporting real-time iteration MPC.</p>
+            </div>
+            <div class="figure-preview runtime-preview">
+              <img src="media/runtime_ablation_table.png" alt="Runtime breakdown table for GPUSLS-LEO experiments">
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
 
-        <section id="projects">
-            <h2>Projects</h2>
-            <p>Your content goes here.</p>
-        </section>
+    <section class="section tight method-band" id="experiments" aria-labelledby="experiments-title">
+      <div class="container">
+        <span class="section-kicker">Experiments</span>
+        <h2 id="experiments-title">Multi-Quadrotor Robust Planning</h2>
+        <p class="section-intro">
+          GPUSLS-LEO scales to a coupled system of 14 3D quadrotors, producing tight tubes while navigating through an obstacle field under adversarial disturbances.
+        </p>
+        <div class="grid two">
+          <article class="card figure-card">
+            <div class="figure-preview animation-preview">
+              <img src="media/drone_chase_views.gif" alt="Animated chase views of the coupled multi-quadrotor setup">
+            </div>
+            <div class="figure-copy">
+              <h3>Chase views</h3>
+              <p>Animated views of the coupled quadrotor team moving through the obstacle field.</p>
+            </div>
+          </article>
+          <article class="card figure-card">
+            <div class="figure-preview animation-preview">
+              <img src="media/left_plot_rollouts_with_quads.gif" alt="Animated multi-quadrotor rollouts with robust tubes">
+            </div>
+            <div class="figure-copy">
+              <h3>Rollouts and tubes</h3>
+              <p>Closed-loop rollout visualization for the high-dimensional coupled quadrotor experiment.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
 
-        <section id="contact">
-            <h2>Contact</h2>
-            <p>Your content goes here.</p>
-        </section>
-    </main>
+    <section class="section tight" aria-labelledby="paper-experiments-title">
+      <div class="container">
+        <span class="section-kicker">Experiments</span>
+        <h2 id="paper-experiments-title">Analytic and Neural Dynamics Benchmarks</h2>
+        <div class="grid two">
+          <article class="card figure-card">
+            <div class="figure-preview">
+              <img src="media/linearization_errors.png" alt="Linearization error bound comparison plots">
+            </div>
+            <div class="figure-copy">
+              <h3>Linearization error bounds</h3>
+              <p>Path-based Hessian bounds achieve the tightest over-approximation on satellite and quadrotor systems.</p>
+            </div>
+          </article>
+          <article class="card figure-card">
+            <div class="figure-preview">
+              <img src="media/satellite_tubes.png" alt="Satellite robust tubes comparison and rollout containment plots">
+            </div>
+            <div class="figure-copy">
+              <h3>Satellite robust tubes</h3>
+              <p>GPUSLS-LEO produces the least conservative certified tubes among the paper's satellite baselines.</p>
+            </div>
+          </article>
+          <article class="card figure-card">
+            <div class="figure-preview">
+              <img src="media/long_tubes.png" alt="Long-horizon planar quadrotor trajectory and tube width plots">
+            </div>
+            <div class="figure-copy">
+              <h3>Long-horizon quadrotor</h3>
+              <p>Tube widths stay bounded over a long obstacle-field trajectory by optimizing tube sizes in the controller.</p>
+            </div>
+          </article>
+          <article class="card figure-card">
+            <div class="figure-preview">
+              <img src="media/t_push_tubes.png" alt="Neural T-pusher tube ablations and rollout containment plots">
+            </div>
+            <div class="figure-copy">
+              <h3>Neural T-pusher</h3>
+              <p>Nonzero-centered tubes and linearization-error gradients reduce tube widths while preserving containment.</p>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
 
-    <!-- Footer -->
-    <footer>
-        <p>&copy; 2026 Your Name. All rights reserved.</p>
-    </footer>
-
-    <!-- JavaScript -->
-    <script src="script.js"></script>
-
+  <footer class="footer">
+    <div class="footer-inner">
+      <span>Georgia Institute of Technology</span>
+      <span>Equal contribution: Jeffrey Fang and Keyi Shen</span>
+    </div>
+  </footer>
 </body>
 </html>
