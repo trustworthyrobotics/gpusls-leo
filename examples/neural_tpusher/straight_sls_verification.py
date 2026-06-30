@@ -12,8 +12,21 @@ jax.config.update("jax_default_matmul_precision", "highest")
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-sys.path.insert(0, "/home/jeff/trustworthroboticsgroup/gpu_sls/src/gpu_sls/external/ReachDev")
-sys.path.insert(0, "/home/jeff/trustworthroboticsgroup/gpu_sls/src/gpu_sls/external/ReachDev/CROWN_Reach")
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../.."))
+LINEARIZATION_ERROR = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "linearization_error"
+)
+CROWN_REACH = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "ReachDev", "CROWN_Reach"
+)
+
+REACH_DEV = os.path.join(
+    ROOT, "src", "gpu_sls", "external", "ReachDev"
+)
+
+sys.path.insert(0, LINEARIZATION_ERROR)
+sys.path.insert(0, CROWN_REACH)
+sys.path.insert(0, REACH_DEV)
 
 from gpu_sls.external.ReachDev.envs.T_pushing.t_sim import T_Sim
 from gpu_sls.external.ReachDev.planning.T_pushing.plan_utils import (
