@@ -29,9 +29,6 @@ jax.config.update("jax_default_matmul_precision", "highest")
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-sys.path.insert(0, "/home/jeff/trustworthroboticsgroup/gpu_sls/src/gpu_sls/external/ReachDev")
-sys.path.insert(0, "/home/jeff/trustworthroboticsgroup/gpu_sls/src/gpu_sls/external/ReachDev/CROWN_Reach")
-
 from gpu_sls.external.ReachDev.envs.T_pushing.t_sim import T_Sim
 from gpu_sls.external.ReachDev.planning.T_pushing.plan_utils import (
     generate_test_cases,
